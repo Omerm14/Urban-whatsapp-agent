@@ -3,7 +3,8 @@
     "name": "אורבן בייקרי",
     "address": "ניצנה 14, תל אביב יפו",
     "wolt": "https://wolt.com/he/isr/tel-aviv/venue/urban-bakery-1",
-    "manager_whatsapp": "0546408547"
+    "manager_whatsapp": "0546408547",
+    "manager_name": "דור"
   },
   "faq": [
     {
@@ -19,7 +20,7 @@
     {
       "id": "reservation",
       "question": "צריך להזמין מקום מראש?",
-      "answer": "לא צריך להזמין מקום — הישיבה על בסיס מקום פנוי, אז תגיעו מתי שנוח!"
+      "answer": "אין צורך בהזמנה, הישיבה על בסיס מקום פנוי"
     },
     {
       "id": "vegan",
