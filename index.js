@@ -12,7 +12,38 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const conversations = {};
 const pendingEscalations = []; // { customerPhone, customerName, question, timestamp }
 
+let websiteContent = null;
+
+async function fetchWebsiteKB() {
+  try {
+    const res = await axios.get("https://urbanbakery.co", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "he,en;q=0.9",
+      },
+      timeout: 8000,
+    });
+    const text = res.data
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 4000);
+    console.log("🌐 Website content fetched successfully");
+    return text;
+  } catch (err) {
+    console.log("🌐 Website fetch skipped:", err.message);
+    return null;
+  }
+}
+
 function buildSystemPrompt() {
+  const websiteSection = websiteContent
+    ? `\nמידע נוסף מהאתר הרשמי של אורבן בייקרי (urbanbakery.co):\n${websiteContent}\n`
+    : "";
+
   return `שמך נועה, נציגת שירות הלקוחות של אורבן בייקרי. דברי תמיד בעברית.
 
 הטון שלך: חם, ישיר, אנושי — כמו מישהי שמכירה את המקום ואוהבת אותו. לא פורמלי, לא רובוטי.
@@ -26,10 +57,15 @@ function buildSystemPrompt() {
 - כשאת מדברת בשם העסק (אנחנו / אורבן בייקרי) — השתמשי בלשון רבים ניטרלי: "פתוחים", "מחכים", "נשמחים" — לא "פתוחות", "מחכות"
 - כשפונה ללקוח/ה, פני בלשון רבים: "תגיעו", "תשלחו" — לא "תגיע/י", "תשלח/י"
 - נסי לזהות מגדר הלקוח/ה מהשיחה; אם לא ברור — פני בניטרלי או רבים
+- גם כשהתשובה היא "לא" — אמרי אותה בחום ועם אלטרנטיבה. לעולם אל תגידי "לא" בלבד.
+- אם ההודעה קצרה מאוד או לא ברורה — שאלי בנעימות מה הם מחפשים, במקום להשיב בביטחון נמוך
 
 דוגמאות — רובוטי vs אנושי:
 ❌ "בהחלט! אנחנו פתוחות בימים ראשון עד חמישי בין השעות 07:00-19:00"
 ✅ "ראשון עד חמישי 7 עד 7, שישי ושבת עד 4 🙂"
+
+❌ "לא, המקום לא כשר."
+✅ "אנחנו לא כשרים, אבל יש לנו המון אפשרויות מדהימות — תפריט עשיר לכולם 😊"
 
 ❌ "כמובן שיש לנו אפשרויות טבעוניות! נשמח לפרט:"
 ✅ "יש! כריך אבוקדו, כרובית, עוגת בננות שוקולד... תגיעו ונעדכן על מה שיש היום 😊"
@@ -39,11 +75,13 @@ function buildSystemPrompt() {
 
 בסיס ידע:
 ${KB.faq.map((qa) => `שאלה: ${qa.question}\nתשובה: ${qa.answer}`).join("\n---\n")}
-
-חוקים חשובים:
-1. התחילי כל תשובה בשורה: "Confidence: XX%" (0–100) — בלי טקסט נוסף בשורה הזו
-2. אחר כך תני את התשובה בעברית
-3. אם הביטחון שלך נמוך מ-70%, כתבי בדיוק: "Confidence: 20%\nאני לא בטוחה בתשובה, עוד רגע מישהו מהצוות יחזור אלייך 😊"`;
+${websiteSection}
+חוקים חשובים לפורמט התשובה:
+1. שורה ראשונה חייבת להיות **בדיוק**: "Confidence: XX%" (0–100) — בלי שום דבר לפניה
+2. שורה שנייה ואילך: התשובה בעברית בלבד
+3. אל תכתבי את המילה "Confidence" בשום מקום אחר בתשובה — רק בשורה הראשונה
+4. אם השאלה נוגעת לשעות, כשרות, טבעוני, גלוטן, כתובת, הזמנת מקום — תמיד תשיבי מהבסיס ידע עם ביטחון גבוה (85%+)
+5. אם הביטחון נמוך מ-55%, כתבי: "Confidence: 20%\nרגע, אני לא בטוחה — מישהו מהצוות יחזור אלייך עוד רגע 😊"`;
 }
 
 // Detect topics that have fixed responses (skip Claude)
@@ -138,6 +176,15 @@ async function handleManagerReply(answer) {
   console.log(`📚 KB updated: "${pending.question}"`);
 }
 
+// Strip confidence line wherever it appears and clean up separators
+function extractAnswer(raw) {
+  return raw
+    .replace(/^Confidence:\s*\d+%?\s*\n?/im, "")
+    .replace(/\n?Confidence:\s*\d+%?\s*/gim, "")
+    .replace(/^---\s*\n?/gm, "")
+    .trim();
+}
+
 // Receive messages from WhatsApp
 app.post("/webhook", async (req, res) => {
   try {
@@ -186,9 +233,9 @@ app.post("/webhook", async (req, res) => {
 
     const confidenceMatch = raw.match(/Confidence:\s*(\d+)/i);
     const confidence = confidenceMatch ? parseInt(confidenceMatch[1]) : 50;
-    const answer = raw.replace(/^Confidence:\s*\d+%?\s*/i, "").trim();
+    const answer = extractAnswer(raw);
 
-    if (confidence >= 70) {
+    if (confidence >= 55) {
       await sendWhatsAppMessage(phoneNumber, answer);
       conv.messages.push({ role: "assistant", content: answer });
       console.log(`✅ Answered (${confidence}%)`);
@@ -207,7 +254,7 @@ app.post("/webhook", async (req, res) => {
       logEscalation(customerName, phoneNumber, customerMessage);
       await sendWhatsAppMessage(
         phoneNumber,
-        "אני לא בטוחה בתשובה, עוד רגע מישהו מהצוות יחזור אלייך 😊"
+        "רגע, אני לא בטוחה — מישהו מהצוות יחזור אלייך עוד רגע 😊"
       );
       console.log(`⚠️  Escalated (${confidence}%)`);
     }
@@ -239,7 +286,8 @@ app.get("/health", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
   console.log(`Webhook: http://localhost:${PORT}/webhook`);
+  websiteContent = await fetchWebsiteKB();
 });
