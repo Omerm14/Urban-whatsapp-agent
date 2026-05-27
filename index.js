@@ -38,13 +38,13 @@ let websiteContent = null;
 const FOLLOW_UP_AFTER_MS = 10 * 60 * 1000;
 const CLOSE_AFTER_MS = 5 * 60 * 1000;
 const FOLLOW_UP_MSGS = [
-  "יש עוד משהו שאפשר לעזור?",
-  "אם יש שאלה נוספת אשמח לעזור",
+  "יש עוד שאלות?",
+  "אם יש עוד שאלה, אנחנו פה",
 ];
 const CLOSING_MSGS = [
-  "בסדר גמור! נשמח לראות אותך בקרוב",
-  "יום טוב! אם תצטרך עוד משהו אנחנו פה",
-  "בהצלחה, מחכים לך",
+  "אוקיי! אם יצטרך משהו, אנחנו כאן",
+  "כיף! אם יש עוד שאלות, אנחנו פה",
+  "טוב! בוא/י מתי שמתאים",
 ];
 
 async function fetchWebsiteKB() {
@@ -106,6 +106,12 @@ function buildSystemPrompt() {
 לקוח: "תודה רבה!"
 ליה: "בכיף! ❤️"
 
+לקוח: "אתם כשרים?"
+ליה: "לא, אנחנו לא כשרים. אבל התפריט עשיר, רוב האנשים מוצאים המון דברים טובים"
+
+לקוח: "מה הכתובת?"
+ליה: "ניצנה 14, תל אביב. בואו!"
+
 לקוח: "Hey can I reserve a cake for tomorrow?"
 ליה: "Hey, sure! Can you come in the morning?"
 
@@ -124,15 +130,10 @@ function buildSystemPrompt() {
 • לחם לא פרוס: אפשר — לציין בהערות בהזמנה
 • מרחב מוגן: כן, כ-50 מטר מהמקום
 • הזמנה / תפריט / משלוח: ${KB.business.wolt}
-• שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: לפנות לדור — [SEND_DOR_CONTACT]
+• שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: לפנות לדור
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
-פורמט טכני (לא חלק מהתשובה):
-1. שורה 1 בדיוק: "Confidence: XX%" (0–100) — בלי שום דבר לפניה
-2. שורה 2+: התשובה עצמה
-3. אל תכתבי "Confidence" בשום מקום אחר
-4. שאלה על הזמנה / תפריט / משלוח — כלולי את קישור הוולט
-5. שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף
-6. אם הביטחון נמוך מ-55%, כתבי רק: "Confidence: 20%"`;
+שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף ההודעה.
+אם שאלה חורגת לגמרי מכל מה שמופיע למעלה ואין לה תשובה סבירה — כתבי [ESCALATE] בשורה נפרדת ותו לא. בכל מקרה אחר, עני טבעית בסגנון שלך.`;
 }
 
 async function callClaude(conversationMessages, customerName) {
@@ -229,15 +230,6 @@ async function handleManagerReply(answer) {
   console.log(`📚 KB updated: "${pending.question}"`);
 }
 
-// Strip confidence line wherever it appears and clean up separators
-function extractAnswer(raw) {
-  return raw
-    .replace(/^Confidence:\s*\d+%?\s*\n?/im, "")
-    .replace(/\n?Confidence:\s*\d+%?\s*/gim, "")
-    .replace(/^---\s*\n?/gm, "")
-    .trim();
-}
-
 // Receive messages from WhatsApp
 app.post("/webhook", async (req, res) => {
   try {
@@ -279,24 +271,7 @@ app.post("/webhook", async (req, res) => {
     // Call Claude
     const raw = await callClaude(conv.messages, customerName);
 
-    const confidenceMatch = raw.match(/Confidence:\s*(\d+)/i);
-    const confidence = confidenceMatch ? parseInt(confidenceMatch[1]) : 50;
-    let answer = extractAnswer(raw);
-
-    const sendDorContact = answer.includes("[SEND_DOR_CONTACT]");
-    answer = answer.replace(/\[SEND_DOR_CONTACT\]/g, "").trim();
-
-    if (confidence >= 55) {
-      await sendWhatsAppMessage(phoneNumber, answer);
-      if (sendDorContact && !conv.dorContactSent) {
-        await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
-        conv.dorContactSent = true;
-        console.log(`📇 Dor contact sent`);
-      }
-      conv.messages.push({ role: "assistant", content: answer });
-      saveConversations();
-      console.log(`✅ Answered (${confidence}%)`);
-    } else {
+    if (raw.includes("[ESCALATE]")) {
       // Escalate to Dor silently — customer gets Dor's reply directly via handleManagerReply
       pendingEscalations.push({
         customerPhone: phoneNumber,
@@ -310,7 +285,19 @@ app.post("/webhook", async (req, res) => {
       );
       logEscalation(customerName, phoneNumber, customerMessage);
       saveConversations();
-      console.log(`⚠️  Escalated (${confidence}%)`);
+      console.log(`⚠️  Escalated`);
+    } else {
+      const sendDorContact = raw.includes("[SEND_DOR_CONTACT]");
+      const answer = raw.replace(/\[SEND_DOR_CONTACT\]/g, "").trim();
+      await sendWhatsAppMessage(phoneNumber, answer);
+      if (sendDorContact && !conv.dorContactSent) {
+        await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
+        conv.dorContactSent = true;
+        console.log(`📇 Dor contact sent`);
+      }
+      conv.messages.push({ role: "assistant", content: answer });
+      saveConversations();
+      console.log(`✅ Answered`);
     }
 
     res.status(200).send("OK");
