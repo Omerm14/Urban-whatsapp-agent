@@ -10,10 +10,32 @@ app.use(express.json());
 const KB = JSON.parse(fs.readFileSync("kb.json", "utf8"));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const conversations = {};
+const pendingEscalations = []; // { customerPhone, customerName, question, timestamp }
 
-const SYSTEM_PROMPT = `שמך נועה, סוכנת שירות הלקוחות של אורבן בייקרי. דברי תמיד בעברית. הטון שלך חם, יומיומי ואנושי — לא רובוטי, לא ציני, ולא חצוף.
+function buildSystemPrompt() {
+  return `שמך נועה, נציגת שירות הלקוחות של אורבן בייקרי. דברי תמיד בעברית.
 
-לגבי המגדר של הלקוח/ה: נסי לזהות מהשיחה אם הלקוח/ה הוא גבר, אישה או לא ברור. אם לא ברור — פני בלשון ניטרלית או בצורת זכר/נקבה (כגון "תבוא/י", "ברוך/ה הבא/ה"). אל תניחי שהלקוח/ה הוא אישה אם לא הוגדר. הטון שלך עצמך — נשי ועדין.
+הטון שלך: חם, ישיר, אנושי — כמו מישהי שמכירה את המקום ואוהבת אותו. לא פורמלי, לא רובוטי.
+
+כללי שפה חשובים:
+- **אסור** להתחיל תשובה במילים: "כמובן!", "בהחלט!", "ודאי!", "שמחה לעזור!", "אשמח לעזור!", "כן, בטח!"
+- תשובות קצרות — 1 עד 3 משפטים. לא יותר.
+- אל תחזרי על השאלה של הלקוח/ה בתשובה שלך
+- אל תזכירי שאת AI — בכלל
+- דברי בגוף נקבה כשמדברת על עצמך (גוף ראשון יחיד)
+- כשאת מדברת בשם העסק (אנחנו / אורבן בייקרי) — השתמשי בלשון רבים ניטרלי: "פתוחים", "מחכים", "נשמחים" — לא "פתוחות", "מחכות"
+- כשפונה ללקוח/ה, פני בלשון רבים: "תגיעו", "תשלחו" — לא "תגיע/י", "תשלח/י"
+- נסי לזהות מגדר הלקוח/ה מהשיחה; אם לא ברור — פני בניטרלי או רבים
+
+דוגמאות — רובוטי vs אנושי:
+❌ "בהחלט! אנחנו פתוחות בימים ראשון עד חמישי בין השעות 07:00-19:00"
+✅ "ראשון עד חמישי 7 עד 7, שישי ושבת עד 4 🙂"
+
+❌ "כמובן שיש לנו אפשרויות טבעוניות! נשמח לפרט:"
+✅ "יש! כריך אבוקדו, כרובית, עוגת בננות שוקולד... תגיעו ונעדכן על מה שיש היום 😊"
+
+❌ "אני מבינה את תסכולך ואשמח לעזור"
+✅ "אוי, מצטערת! בואו נסדר את זה"
 
 בסיס ידע:
 ${KB.faq.map((qa) => `שאלה: ${qa.question}\nתשובה: ${qa.answer}`).join("\n---\n")}
@@ -21,13 +43,13 @@ ${KB.faq.map((qa) => `שאלה: ${qa.question}\nתשובה: ${qa.answer}`).join(
 חוקים חשובים:
 1. התחילי כל תשובה בשורה: "Confidence: XX%" (0–100) — בלי טקסט נוסף בשורה הזו
 2. אחר כך תני את התשובה בעברית
-3. אם הביטחון שלך נמוך מ-70%, כתבי בדיוק: "Confidence: 20%\\nאני לא בטוחה בתשובה, עוד רגע מישהו מהצוות יחזור אלייך 😊"
-4. אל תזכירי שאת AI
-5. דברי בגוף נקבה כשמדברת על עצמך בכל עת`;
+3. אם הביטחון שלך נמוך מ-70%, כתבי בדיוק: "Confidence: 20%\nאני לא בטוחה בתשובה, עוד רגע מישהו מהצוות יחזור אלייך 😊"`;
+}
 
 // Detect topics that have fixed responses (skip Claude)
 function detectIntent(text) {
-  const t = text;
+  const t = text.trim();
+  if (/^(היי+|הי+|שלום|בוקר טוב|ערב טוב|צהריים טובים|מה נשמע|hey|hi)\s*[!?]*$/i.test(t)) return "greeting";
   if (/תפריט|משלוח|הזמנה|וולט|wolt|לאכול|מנות|מחיר|עלות/.test(t)) return "wolt";
   if (/שיתוף פעולה|ספק|לספק|סיפוק|בתי קפה|שיתוף/.test(t)) return "collab";
   if (/אירוע|מגש|אירוח|קייטרינג|catering|ארגון|חברה/.test(t)) return "catering";
@@ -35,14 +57,17 @@ function detectIntent(text) {
 }
 
 function buildFixedResponse(intent) {
+  if (intent === "greeting") {
+    return "הייי, נעים מאוד! 😊 איך אפשר לעזור?";
+  }
   if (intent === "wolt") {
     return `לתפריט המלא ולהזמנת משלוח — הנה הקישור לוולט שלנו 🍽️\n${KB.business.wolt}`;
   }
   if (intent === "collab") {
-    return `לשיתופי פעולה עסקיים, שלחי הודעה לדור ישירות:\n📞 ${KB.business.manager_whatsapp}`;
+    return `לשיתופי פעולה עסקיים, שלחו הודעה לדור ישירות:\n📞 ${KB.business.manager_whatsapp}`;
   }
   if (intent === "catering") {
-    return `למגשי אירוח ואירועים עסקיים — שלחי הודעה לדור בוואטסאפ ויחזור אלייך בהקדם:\n📲 ${KB.business.manager_whatsapp}`;
+    return `למגשי אירוח ואירועים עסקיים — שלחו הודעה לדור בוואטסאפ ויחזור אליכם בהקדם:\n📲 ${KB.business.manager_whatsapp}`;
   }
 }
 
@@ -50,7 +75,7 @@ async function callClaude(conversationMessages) {
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 512,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(),
     messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
   });
   return response.content[0].text;
@@ -88,6 +113,31 @@ function logEscalation(customerName, phoneNumber, question) {
   fs.writeFileSync("escalations.json", JSON.stringify(escalations, null, 2));
 }
 
+async function handleManagerReply(answer) {
+  if (pendingEscalations.length === 0) {
+    await sendWhatsAppMessage(process.env.MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
+    return;
+  }
+
+  const pending = pendingEscalations.shift();
+
+  await sendWhatsAppMessage(pending.customerPhone, answer);
+
+  KB.faq.push({
+    id: `custom_${Date.now()}`,
+    question: pending.question,
+    answer: answer,
+  });
+  fs.writeFileSync("kb.json", JSON.stringify(KB, null, 2));
+
+  await sendWhatsAppMessage(
+    process.env.MANAGER_PHONE,
+    `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`
+  );
+
+  console.log(`📚 KB updated: "${pending.question}"`);
+}
+
 // Receive messages from WhatsApp
 app.post("/webhook", async (req, res) => {
   try {
@@ -104,6 +154,13 @@ app.post("/webhook", async (req, res) => {
     const customerName = contact.profile?.name || phoneNumber;
 
     console.log(`📱 ${customerName}: ${customerMessage}`);
+
+    // Route manager replies to handleManagerReply
+    const managerPhone = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
+    if (phoneNumber === managerPhone) {
+      await handleManagerReply(customerMessage);
+      return res.status(200).send("OK");
+    }
 
     // Fixed-response routing (no Claude needed)
     const intent = detectIntent(customerMessage);
@@ -137,6 +194,12 @@ app.post("/webhook", async (req, res) => {
       console.log(`✅ Answered (${confidence}%)`);
     } else {
       // Escalate to Dor
+      pendingEscalations.push({
+        customerPhone: phoneNumber,
+        customerName: customerName,
+        question: customerMessage,
+        timestamp: new Date().toISOString(),
+      });
       await sendWhatsAppMessage(
         process.env.MANAGER_PHONE,
         `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`
