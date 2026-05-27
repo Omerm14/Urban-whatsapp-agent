@@ -59,6 +59,8 @@ function buildSystemPrompt() {
 - נסי לזהות מגדר הלקוח/ה מהשיחה; אם לא ברור — פני בניטרלי או רבים
 - גם כשהתשובה היא "לא" — אמרי אותה בחום ועם אלטרנטיבה. לעולם אל תגידי "לא" בלבד.
 - אם ההודעה קצרה מאוד או לא ברורה — שאלי בנעימות מה הם מחפשים, במקום להשיב בביטחון נמוך
+- השתמשי במגוון אימוג׳ים שמתאימים להקשר — 😊🙂😄🥐☕🍰🌿✨🙌😋 ועוד. אל תשתמשי באותו אימוג׳י פעמיים ברצף
+- מותר להיות שובבה, להוסיף הומור קל, להגיב בהתלהבות אמיתית — כמו שיחה בין חברות. הכתיבה לא חייבת להיות מושלמת דקדוקית, זה וואטסאפ
 
 דוגמאות — רובוטי vs אנושי:
 ❌ "בהחלט! אנחנו פתוחות בימים ראשון עד חמישי בין השעות 07:00-19:00"
@@ -109,11 +111,15 @@ function buildFixedResponse(intent) {
   }
 }
 
-async function callClaude(conversationMessages) {
+async function callClaude(conversationMessages, customerName) {
+  const nameNote =
+    customerName && !/^\d+$/.test(customerName)
+      ? `\nשם הלקוח/ה בשיחה הזו: "${customerName}". השתמשי בשם לפעמים בצורה טבעית — לא בכל משפט. אם השם באנגלית, תעתיקי אותו לעברית (למשל: "Omer" → "עומר", "Sarah" → "שרה").`
+      : "";
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 512,
-    system: buildSystemPrompt(),
+    system: buildSystemPrompt() + nameNote,
     messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
   });
   return response.content[0].text;
@@ -229,7 +235,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // Call Claude
-    const raw = await callClaude(conv.messages);
+    const raw = await callClaude(conv.messages, customerName);
 
     const confidenceMatch = raw.match(/Confidence:\s*(\d+)/i);
     const confidence = confidenceMatch ? parseInt(confidenceMatch[1]) : 50;
