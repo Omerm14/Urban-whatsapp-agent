@@ -35,6 +35,18 @@ for (const phone of Object.keys(conversations)) {
 
 let websiteContent = null;
 
+const FOLLOW_UP_AFTER_MS = 10 * 60 * 1000;
+const CLOSE_AFTER_MS = 5 * 60 * 1000;
+const FOLLOW_UP_MSGS = [
+  "יש עוד משהו שאפשר לעזור?",
+  "אם יש שאלה נוספת אשמח לעזור",
+];
+const CLOSING_MSGS = [
+  "בסדר גמור! נשמח לראות אותך בקרוב",
+  "יום טוב! אם תצטרך עוד משהו אנחנו פה",
+  "בהצלחה, מחכים לך",
+];
+
 async function fetchWebsiteKB() {
   try {
     const res = await axios.get("https://urbanbakery.co", {
@@ -70,14 +82,13 @@ function buildSystemPrompt() {
     .map((qa) => `• ${qa.answer}`)
     .join("\n");
 
-  return `שמך ליה. את נציגת שירות הלקוחות של אורבן בייקרי — קפה ומאפייה בתל אביב.
-את חברותית, ישירה, מכירה כל לקוח/ה בשמם. מדברת קצר וחם — בדיוק כמו הצוות האמיתי שם.
-תמיד בעברית — אלא אם הלקוח/ה כותב באנגלית, אז תגיבי באנגלית.
-
-מה שאת לא עושה: לא מתחילה ב"כמובן", "בהחלט", "שמחה לעזור". לא מוסיפה אימוג׳י לכל הודעה. לא חוזרת על השאלה. לא מזכירה שאת AI.
-
-כשמדברת בשם העסק ("אנחנו") — "פתוחים", "מחכים" (לא "פתוחות"). כשפונה ללקוח/ה — לפי מגדרם אם ברור (מוזמנת / מוזמן), אחרת לשון רבים.
-גם כשהתשובה "לא" — תני אותה בחום. אם פריט לא זמין — הצעי אלטרנטיבה.
+  return `שמך ליה. את נציגת שירות הלקוחות של אורבן בייקרי, קפה ומאפייה בתל אביב.
+את כותבת כמו שמדברים בוואטסאפ עם מישהו שמכיר את המקום מבפנים — קצר, ישיר, חם. לא פורמלי, לא רובוטי, בלי לשון גבוהה.
+כשמישהו שואל שאלה פשוטה, עונים לה פשוט. כשיש בשורה טובה, מרגישים אותה. כשהתשובה "לא", אומרים אותה בלי להתנצל יתר על המידה, ומציעים משהו אחר אם אפשר.
+אימוג׳י? רק כשזה מרגיש טבעי לחלוטין — רוב ההודעות לא צריכות אחד.
+תמיד בעברית, אלא אם הלקוח כותב באנגלית.
+כשמדברים בשם העסק — "פתוחים", "מחכים" (לא "פתוחות"). כשפונים ללקוח לפי מגדר אם ברור, אחרת רבים.
+לא מזכירים שזה AI.
 
 דוגמאות מהצוות האמיתי (כך נשמעת תשובה טובה):
 לקוחה: "מה עלות עוגת הגבינה?"
@@ -115,14 +126,13 @@ function buildSystemPrompt() {
 • הזמנה / תפריט / משלוח: ${KB.business.wolt}
 • שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: לפנות לדור — [SEND_DOR_CONTACT]
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
-חוקים לפורמט התשובה:
+פורמט טכני (לא חלק מהתשובה):
 1. שורה 1 בדיוק: "Confidence: XX%" (0–100) — בלי שום דבר לפניה
-2. שורה 2+: התשובה שלך בניסוח טבעי — כל פעם קצת שונה, תמיד נכון בעובדות
-3. אל תכתבי את המילה "Confidence" בשום מקום אחר
-4. שאלה על הזמנה / תפריט / משלוח — כלולי את קישור הוולט בתשובה
-5. שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף ההודעה
-6. אם הביטחון נמוך מ-55%, כתבי רק: "Confidence: 20%"
-7. הימנעי ממקפים (– -) לחיבור רעיונות בתוך משפט — כתבי בצורה זורמת וטבעית`;
+2. שורה 2+: התשובה עצמה
+3. אל תכתבי "Confidence" בשום מקום אחר
+4. שאלה על הזמנה / תפריט / משלוח — כלולי את קישור הוולט
+5. שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף
+6. אם הביטחון נמוך מ-55%, כתבי רק: "Confidence: 20%"`;
 }
 
 async function callClaude(conversationMessages, customerName) {
@@ -254,9 +264,12 @@ app.post("/webhook", async (req, res) => {
 
     // Maintain conversation history
     if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null };
+      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false };
     }
     const conv = conversations[phoneNumber];
+    // Reset follow-up/close state when customer writes again
+    conv.followUpSentAt = null;
+    conv.conversationClosed = false;
     conv.messages.push({ role: "user", content: customerMessage });
     conv.lastSeen = new Date().toISOString();
     if (conv.messages.length > 20) {
@@ -331,4 +344,30 @@ app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
   console.log(`Webhook: http://localhost:${PORT}/webhook`);
   websiteContent = await fetchWebsiteKB();
+
+  const managerPhone = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
+  setInterval(async () => {
+    const now = Date.now();
+    for (const [phone, conv] of Object.entries(conversations)) {
+      if (phone === managerPhone) continue;
+      if (conv.conversationClosed || !conv.lastSeen || conv.messages.length === 0) continue;
+      const silenceMs = now - new Date(conv.lastSeen).getTime();
+      if (!conv.followUpSentAt && silenceMs > FOLLOW_UP_AFTER_MS) {
+        const msg = FOLLOW_UP_MSGS[Math.floor(Math.random() * FOLLOW_UP_MSGS.length)];
+        await sendWhatsAppMessage(phone, msg);
+        conv.followUpSentAt = new Date().toISOString();
+        saveConversations();
+        console.log(`🔔 Follow-up sent to ${phone}`);
+      } else if (conv.followUpSentAt) {
+        const waitedMs = now - new Date(conv.followUpSentAt).getTime();
+        if (waitedMs > CLOSE_AFTER_MS) {
+          const msg = CLOSING_MSGS[Math.floor(Math.random() * CLOSING_MSGS.length)];
+          await sendWhatsAppMessage(phone, msg);
+          conv.conversationClosed = true;
+          saveConversations();
+          console.log(`👋 Conversation closed for ${phone}`);
+        }
+      }
+    }
+  }, 2 * 60 * 1000);
 });
