@@ -9,8 +9,29 @@ app.use(express.json());
 
 const KB = JSON.parse(fs.readFileSync("kb.json", "utf8"));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const conversations = {};
 const pendingEscalations = []; // { customerPhone, customerName, question, timestamp }
+
+function loadConversations() {
+  try {
+    return fs.existsSync("conversations.json")
+      ? JSON.parse(fs.readFileSync("conversations.json", "utf8"))
+      : {};
+  } catch { return {}; }
+}
+
+function saveConversations() {
+  fs.writeFileSync("conversations.json", JSON.stringify(conversations, null, 2));
+}
+
+const conversations = loadConversations();
+// Prune conversations not seen in 60 days
+const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+for (const phone of Object.keys(conversations)) {
+  const last = conversations[phone].lastSeen;
+  if (!last || Date.now() - new Date(last).getTime() > SIXTY_DAYS_MS) {
+    delete conversations[phone];
+  }
+}
 
 let websiteContent = null;
 
@@ -49,7 +70,7 @@ function buildSystemPrompt() {
     .map((qa) => `• ${qa.answer}`)
     .join("\n");
 
-  return `שמך נועה. את נציגת שירות הלקוחות של אורבן בייקרי — קפה ומאפייה בתל אביב.
+  return `שמך ליה. את נציגת שירות הלקוחות של אורבן בייקרי — קפה ומאפייה בתל אביב.
 את חברותית, ישירה, מכירה כל לקוח/ה בשמם. מדברת קצר וחם — בדיוק כמו הצוות האמיתי שם.
 תמיד בעברית — אלא אם הלקוח/ה כותב באנגלית, אז תגיבי באנגלית.
 
@@ -60,22 +81,22 @@ function buildSystemPrompt() {
 
 דוגמאות מהצוות האמיתי (כך נשמעת תשובה טובה):
 לקוחה: "מה עלות עוגת הגבינה?"
-נועה: "היי! 198 ש״ח, קוטר 18 ס״מ 🙂"
+ליה: "היי! 198 ש״ח, קוטר 18 ס״מ 🙂"
 
 לקוחה: "אם אגיע בלי הזמנה יהיו עוגות?"
-נועה: "מקווים שכן, עדיף לשריין מראש — ככה בטוח תישמר לך"
+ליה: "מקווים שכן, עדיף לשריין מראש ככה בטוח תישמר לך"
 
 לקוח: "יש happy hour?"
-נועה: "יש! שעה אחרונה בכל יום — 1+1 על מאפים, כריכים, סלטים ולחמים"
+ליה: "יש! שעה אחרונה בכל יום 1+1 על מאפים, כריכים, סלטים ולחמים"
 
 לקוח: "אפשר לחם לא פרוס?"
-נועה: "כן, תרשמי לנו בהערות"
+ליה: "כן, תרשמי לנו בהערות"
 
 לקוח: "תודה רבה!"
-נועה: "בכיף! ❤️"
+ליה: "בכיף! ❤️"
 
 לקוח: "Hey can I reserve a cake for tomorrow?"
-נועה: "Hey, sure! Can you come in the morning?"
+ליה: "Hey, sure! Can you come in the morning?"
 
 מידע על העסק — את יודעת את זה כמו שחבר יודע על המקום האהוב עליו. כשאת עונה, את מדברת מהבטן בסגנון שלך, לא מציטטת:
 • שעות: ראשון–חמישי 7:00–19:00 | שישי–שבת 7:00–16:00
@@ -100,7 +121,8 @@ ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 3. אל תכתבי את המילה "Confidence" בשום מקום אחר
 4. שאלה על הזמנה / תפריט / משלוח — כלולי את קישור הוולט בתשובה
 5. שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף ההודעה
-6. אם הביטחון נמוך מ-55%, כתבי: "Confidence: 20%\nרגע, אני לא בטוחה — מישהו מהצוות יחזור אלייך עוד רגע 😊"`;
+6. אם הביטחון נמוך מ-55%, כתבי רק: "Confidence: 20%"
+7. הימנעי ממקפים (– -) לחיבור רעיונות בתוך משפט — כתבי בצורה זורמת וטבעית`;
 }
 
 async function callClaude(conversationMessages, customerName) {
@@ -232,12 +254,13 @@ app.post("/webhook", async (req, res) => {
 
     // Maintain conversation history
     if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [] };
+      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null };
     }
     const conv = conversations[phoneNumber];
     conv.messages.push({ role: "user", content: customerMessage });
-    if (conv.messages.length > 10) {
-      conv.messages = conv.messages.slice(-10);
+    conv.lastSeen = new Date().toISOString();
+    if (conv.messages.length > 20) {
+      conv.messages = conv.messages.slice(-20);
     }
 
     // Call Claude
@@ -252,14 +275,16 @@ app.post("/webhook", async (req, res) => {
 
     if (confidence >= 55) {
       await sendWhatsAppMessage(phoneNumber, answer);
-      if (sendDorContact) {
+      if (sendDorContact && !conv.dorContactSent) {
         await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
+        conv.dorContactSent = true;
         console.log(`📇 Dor contact sent`);
       }
       conv.messages.push({ role: "assistant", content: answer });
+      saveConversations();
       console.log(`✅ Answered (${confidence}%)`);
     } else {
-      // Escalate to Dor
+      // Escalate to Dor silently — customer gets Dor's reply directly via handleManagerReply
       pendingEscalations.push({
         customerPhone: phoneNumber,
         customerName: customerName,
@@ -271,10 +296,7 @@ app.post("/webhook", async (req, res) => {
         `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`
       );
       logEscalation(customerName, phoneNumber, customerMessage);
-      await sendWhatsAppMessage(
-        phoneNumber,
-        "רגע, אני לא בטוחה — מישהו מהצוות יחזור אלייך עוד רגע 😊"
-      );
+      saveConversations();
       console.log(`⚠️  Escalated (${confidence}%)`);
     }
 

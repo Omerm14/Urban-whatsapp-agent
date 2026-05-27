@@ -1,4 +1,5 @@
 node_modules/
 .env
 escalations.json
+conversations.json
 chat-history/extracted/
