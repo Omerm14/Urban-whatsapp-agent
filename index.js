@@ -41,8 +41,13 @@ async function fetchWebsiteKB() {
 
 function buildSystemPrompt() {
   const websiteSection = websiteContent
-    ? `\nמידע נוסף מהאתר הרשמי של אורבן בייקרי (urbanbakery.co):\n${websiteContent}\n`
+    ? `\nמידע נוסף מהאתר הרשמי (urbanbakery.co):\n${websiteContent}\n`
     : "";
+
+  const customEntries = KB.faq
+    .filter((qa) => qa.id?.startsWith("custom_"))
+    .map((qa) => `• ${qa.answer}`)
+    .join("\n");
 
   return `שמך נועה. את נציגת שירות הלקוחות של אורבן בייקרי — קפה ומאפייה בתל אביב.
 את חברותית, ישירה, מכירה כל לקוח/ה בשמם. מדברת קצר וחם — בדיוק כמו הצוות האמיתי שם.
@@ -72,40 +77,30 @@ function buildSystemPrompt() {
 לקוח: "Hey can I reserve a cake for tomorrow?"
 נועה: "Hey, sure! Can you come in the morning?"
 
-בסיס ידע:
-${KB.faq.map((qa) => `שאלה: ${qa.question}\nתשובה: ${qa.answer}`).join("\n---\n")}
-${websiteSection}
-חוקים חשובים לפורמט התשובה:
-1. שורה ראשונה חייבת להיות **בדיוק**: "Confidence: XX%" (0–100) — בלי שום דבר לפניה
-2. שורה שנייה ואילך: התשובה בעברית בלבד
-3. אל תכתבי את המילה "Confidence" בשום מקום אחר בתשובה — רק בשורה הראשונה
-4. אם השאלה נוגעת לשעות, כשרות, טבעוני, גלוטן, כתובת, הזמנת מקום — תמיד תשיבי מהבסיס ידע עם ביטחון גבוה (85%+)
-5. אם הביטחון נמוך מ-55%, כתבי: "Confidence: 20%\nרגע, אני לא בטוחה — מישהו מהצוות יחזור אלייך עוד רגע 😊"`;
-}
-
-// Detect topics that have fixed responses (skip Claude)
-function detectIntent(text) {
-  const t = text.trim();
-  if (/^(היי+|הי+|שלום|בוקר טוב|ערב טוב|צהריים טובים|מה נשמע|hey|hi)\s*[!?]*$/i.test(t)) return "greeting";
-  if (/תפריט|משלוח|הזמנה|וולט|wolt|לאכול|מנות|מחיר|עלות/.test(t)) return "wolt";
-  if (/שיתוף פעולה|ספק|לספק|סיפוק|בתי קפה|שיתוף/.test(t)) return "collab";
-  if (/אירוע|מגש|אירוח|קייטרינג|catering|ארגון|חברה/.test(t)) return "catering";
-  return null;
-}
-
-function buildFixedResponse(intent) {
-  if (intent === "greeting") {
-    return "הייי, נעים מאוד! 😊 איך אפשר לעזור?";
-  }
-  if (intent === "wolt") {
-    return `לתפריט המלא ולהזמנת משלוח — הנה הקישור לוולט שלנו 🍽️\n${KB.business.wolt}`;
-  }
-  if (intent === "collab") {
-    return `לשיתופי פעולה עסקיים — דור הוא האיש, הנה הפרטים שלו:`;
-  }
-  if (intent === "catering") {
-    return `למגשי אירוח ואירועים — שלחו לדור ויחזור אליכם בהקדם:`;
-  }
+מידע על העסק — את יודעת את זה כמו שחבר יודע על המקום האהוב עליו. כשאת עונה, את מדברת מהבטן בסגנון שלך, לא מציטטת:
+• שעות: ראשון–חמישי 7:00–19:00 | שישי–שבת 7:00–16:00
+• כשרות: לא כשרים
+• כתובת: ניצנה 14, תל אביב יפו
+• הזמנת מקום: לא נדרשת, ישיבה על בסיס מקום פנוי
+• טבעוני: כריך אבוקדו עם טחינה, כריך כרובית עם לימון כבוש, עוגת בננות שוקולד, סלטים
+• ללא גלוטן: עוגת תפוזים, לחם ללא גלוטן, עוגיות אמרטי
+• happy hour: שעה אחרונה בכל יום (מ-18:00 בחול) — 1+1 על מאפים, כריכים, סלטים, לחמים
+• עוגה מיוחדת: עוגת גבינה 198 ש"ח, קוטר 18 ס"מ, אפשר ברכה אישית, עדיף לשריין מראש
+• לחמים: מחמצת — שיפון אגוזים, כפרי, קמח מלא, צ׳ילי פקאן, זיתים ופרמזן, בריאות, נורווגי. הזמינות משתנה
+• תשלום: מזומן, אשראי במקום, וולט, אשראי טלפוני בהזמנה מראש
+• פרחים: לפעמים יש — כדאי לשאול ביום עצמו
+• לחם לא פרוס: אפשר — לציין בהערות בהזמנה
+• מרחב מוגן: כן, כ-50 מטר מהמקום
+• הזמנה / תפריט / משלוח: ${KB.business.wolt}
+• שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: לפנות לדור — [SEND_DOR_CONTACT]
+${customEntries ? customEntries + "\n" : ""}${websiteSection}
+חוקים לפורמט התשובה:
+1. שורה 1 בדיוק: "Confidence: XX%" (0–100) — בלי שום דבר לפניה
+2. שורה 2+: התשובה שלך בניסוח טבעי — כל פעם קצת שונה, תמיד נכון בעובדות
+3. אל תכתבי את המילה "Confidence" בשום מקום אחר
+4. שאלה על הזמנה / תפריט / משלוח — כלולי את קישור הוולט בתשובה
+5. שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף ההודעה
+6. אם הביטחון נמוך מ-55%, כתבי: "Confidence: 20%\nרגע, אני לא בטוחה — מישהו מהצוות יחזור אלייך עוד רגע 😊"`;
 }
 
 async function callClaude(conversationMessages, customerName) {
@@ -235,18 +230,6 @@ app.post("/webhook", async (req, res) => {
       return res.status(200).send("OK");
     }
 
-    // Fixed-response routing (no Claude needed)
-    const intent = detectIntent(customerMessage);
-    if (intent) {
-      const fixedReply = buildFixedResponse(intent);
-      await sendWhatsAppMessage(phoneNumber, fixedReply);
-      if (intent === "collab" || intent === "catering") {
-        await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
-      }
-      console.log(`🔀 Routed (${intent})`);
-      return res.status(200).send("OK");
-    }
-
     // Maintain conversation history
     if (!conversations[phoneNumber]) {
       conversations[phoneNumber] = { messages: [] };
@@ -262,10 +245,17 @@ app.post("/webhook", async (req, res) => {
 
     const confidenceMatch = raw.match(/Confidence:\s*(\d+)/i);
     const confidence = confidenceMatch ? parseInt(confidenceMatch[1]) : 50;
-    const answer = extractAnswer(raw);
+    let answer = extractAnswer(raw);
+
+    const sendDorContact = answer.includes("[SEND_DOR_CONTACT]");
+    answer = answer.replace(/\[SEND_DOR_CONTACT\]/g, "").trim();
 
     if (confidence >= 55) {
       await sendWhatsAppMessage(phoneNumber, answer);
+      if (sendDorContact) {
+        await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
+        console.log(`📇 Dor contact sent`);
+      }
       conv.messages.push({ role: "assistant", content: answer });
       console.log(`✅ Answered (${confidence}%)`);
     } else {
