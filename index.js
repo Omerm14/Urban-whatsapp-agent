@@ -275,9 +275,10 @@ app.post("/webhook", async (req, res) => {
 
     // Maintain conversation history
     if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false };
+      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName };
     }
     const conv = conversations[phoneNumber];
+    conv.name = customerName;
     // Reset follow-up/close state when customer writes again
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
@@ -345,7 +346,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", business: KB.business.name });
 });
 
-// Conversations browser — protected by WEBHOOK_VERIFY_TOKEN
+// Conversations dashboard — protected by WEBHOOK_VERIFY_TOKEN
 app.get("/conversations", (req, res) => {
   if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) {
     return res.status(403).send("Forbidden");
@@ -355,49 +356,260 @@ app.get("/conversations", (req, res) => {
     ? JSON.parse(fs.readFileSync("escalations.json", "utf8"))
     : [];
 
+  const escalatedPhones = new Set(escalations.map(e => e.phone));
+
   const convEntries = Object.entries(conversations)
     .filter(([, c]) => c.messages.length > 0)
     .sort((a, b) => new Date(b[1].lastSeen) - new Date(a[1].lastSeen));
 
-  const escHtml = escalations.length === 0 ? "<p>None</p>" : escalations
-    .slice().reverse().slice(0, 50)
-    .map(e => `<div class="esc"><span class="ts">${new Date(e.timestamp).toLocaleString("he-IL")}</span> <strong>${e.customer}</strong> (${e.phone}): ${e.question}</div>`)
-    .join("");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const activeToday = convEntries.filter(([, c]) => c.lastSeen && new Date(c.lastSeen) >= today).length;
 
-  const convsHtml = convEntries.map(([phone, conv]) => {
-    const msgs = conv.messages.map(m => {
-      const cls = m.role === "user" ? "msg user" : "msg lia";
-      const label = m.role === "user" ? "👤" : "🤖 ליה";
-      return `<div class="${cls}"><span class="label">${label}</span> ${m.content.replace(/</g, "&lt;")}</div>`;
-    }).join("");
-    const lastSeen = conv.lastSeen ? new Date(conv.lastSeen).toLocaleString("he-IL") : "—";
-    return `<details><summary><strong>${phone}</strong> — ${conv.messages.length} הודעות | נראה לאחרונה: ${lastSeen}</summary><div class="thread">${msgs}</div></details>`;
-  }).join("");
+  const pageData = {
+    conversations: convEntries.map(([phone, conv]) => ({
+      phone,
+      name: conv.name || phone,
+      messages: conv.messages,
+      lastSeen: conv.lastSeen,
+      dorContactSent: !!conv.dorContactSent,
+      conversationClosed: !!conv.conversationClosed,
+      followUpSentAt: conv.followUpSentAt || null,
+      escalated: escalatedPhones.has(phone),
+    })),
+    escalations: escalations.slice().reverse().slice(0, 100),
+    stats: { total: convEntries.length, today: activeToday, escalations: escalations.length },
+  };
 
-  res.send(`<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
-<title>ליה — שיחות</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; background: #f5f5f5; color: #111; }
-  h1 { font-size: 1.4rem; margin-bottom: 4px; }
-  h2 { font-size: 1rem; margin: 28px 0 8px; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-  details { background: #fff; border-radius: 8px; margin-bottom: 10px; padding: 12px 16px; box-shadow: 0 1px 3px #0001; }
-  summary { cursor: pointer; font-size: 0.95rem; }
-  .thread { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-  .msg { padding: 6px 10px; border-radius: 8px; font-size: 0.9rem; max-width: 80%; line-height: 1.5; white-space: pre-wrap; }
-  .msg.user { background: #e1ffc7; align-self: flex-end; }
-  .msg.lia { background: #fff; border: 1px solid #e0e0e0; align-self: flex-start; }
-  .label { font-weight: 600; font-size: 0.75rem; display: block; margin-bottom: 2px; color: #888; }
-  .esc { background: #fff3cd; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; font-size: 0.9rem; }
-  .ts { color: #999; font-size: 0.8rem; margin-left: 8px; }
-  .meta { color: #888; font-size: 0.85rem; margin-bottom: 20px; }
-</style></head><body>
-<h1>🥐 ליה — מרכז שיחות</h1>
-<p class="meta">${convEntries.length} שיחות פעילות | ${escalations.length} escalations</p>
-<h2>📋 Escalations אחרונים</h2>
-${escHtml}
-<h2>💬 שיחות (לפי פעילות אחרונה)</h2>
-${convsHtml || "<p>אין שיחות עדיין</p>"}
-</body></html>`);
+  const jsonData = JSON.stringify(pageData).replace(/<\/script>/gi, "<\\/script>");
+
+  const css = `
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; color: #111; }
+.header { background: #075e54; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.header-title { font-size: 1.05rem; font-weight: 700; }
+.header-stats { display: flex; gap: 24px; margin-right: auto; }
+.stat { text-align: center; line-height: 1.2; }
+.stat-num { font-size: 1.25rem; font-weight: 700; }
+.stat-label { font-size: 0.63rem; opacity: 0.75; }
+.refresh-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: #fff; padding: 5px 14px; border-radius: 16px; cursor: pointer; font-size: 0.82rem; }
+.refresh-btn:hover { background: rgba(255,255,255,0.25); }
+.main { display: flex; flex: 1; overflow: hidden; }
+.sidebar { width: 320px; background: #fff; border-left: 1px solid #e0e0e0; display: flex; flex-direction: column; flex-shrink: 0; }
+.search-wrap { padding: 8px 12px; background: #f8f8f8; border-bottom: 1px solid #f0f0f0; }
+.search-wrap input { width: 100%; padding: 7px 14px; border-radius: 18px; border: none; background: #fff; font-size: 0.87rem; outline: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.tabs { display: flex; border-bottom: 1px solid #e0e0e0; }
+.tab { flex: 1; padding: 9px 4px; text-align: center; font-size: 0.77rem; cursor: pointer; color: #888; border-bottom: 2px solid transparent; user-select: none; }
+.tab.active { color: #075e54; border-bottom-color: #075e54; font-weight: 600; }
+.conv-list { overflow-y: auto; flex: 1; }
+.no-results { padding: 32px 16px; text-align: center; color: #bbb; font-size: 0.87rem; }
+.conv-item { padding: 11px 16px; border-bottom: 1px solid #f5f5f5; cursor: pointer; transition: background 0.1s; }
+.conv-item:hover { background: #f9f9f9; }
+.conv-item.selected { background: #ecf5f4; }
+.conv-item.has-esc { border-right: 3px solid #e53935; }
+.ci-row1 { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+.ci-name { font-weight: 600; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.ci-time { font-size: 0.71rem; color: #aaa; flex-shrink: 0; margin-right: 6px; }
+.ci-preview { font-size: 0.80rem; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 5px; }
+.badges { display: flex; gap: 4px; flex-wrap: wrap; }
+.badge { font-size: 0.65rem; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+.b-esc { background: #ffebee; color: #c62828; }
+.b-dor { background: #e3f2fd; color: #1565c0; }
+.b-closed { background: #f3f3f3; color: #888; }
+.b-active { background: #e8f5e9; color: #2e7d32; }
+.b-fu { background: #fff8e1; color: #e65100; }
+.chat-panel { flex: 1; display: flex; flex-direction: column; background: #efeae2; overflow: hidden; }
+.empty-state { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: #bbb; }
+.empty-state .icon { font-size: 2.5rem; }
+.chat-header { background: #075e54; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.ch-avatar { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0; }
+.ch-info { flex: 1; }
+.ch-name { font-weight: 600; font-size: 0.95rem; }
+.ch-sub { font-size: 0.73rem; opacity: 0.8; }
+.ch-badges { display: flex; gap: 6px; }
+.ch-badge { font-size: 0.7rem; padding: 2px 9px; border-radius: 12px; background: rgba(255,255,255,0.18); }
+.chat-messages { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+.bw { display: flex; margin-bottom: 1px; }
+.bw.u { justify-content: flex-end; }
+.bw.l { justify-content: flex-start; }
+.bubble { max-width: 65%; padding: 7px 11px 5px; border-radius: 8px; font-size: 0.88rem; line-height: 1.55; word-break: break-word; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0,0,0,0.07); }
+.bw.u .bubble { background: #d9fdd3; border-radius: 8px 2px 8px 8px; }
+.bw.l .bubble { background: #fff; border-radius: 2px 8px 8px 8px; }
+.date-sep { text-align: center; margin: 10px 0 6px; }
+.date-sep span { background: #d4d2ce; color: #555; padding: 3px 12px; border-radius: 10px; font-size: 0.71rem; }
+.sys-note { text-align: center; margin: 6px 0; }
+.sys-note span { background: #fff; border: 1px solid #e0ddd8; color: #888; font-size: 0.73rem; padding: 3px 12px; border-radius: 12px; }
+.esc-panel { flex: 1; overflow-y: auto; padding: 14px; }
+.esc-card { background: #fff; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; border-right: 4px solid #e53935; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
+.esc-meta { font-size: 0.74rem; color: #aaa; margin-bottom: 5px; }
+.esc-who { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
+.esc-q { background: #fff8f8; border-radius: 6px; padding: 8px 11px; font-size: 0.87rem; color: #444; border-right: 2px solid #ffcdd2; }
+::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }`;
+
+  const js = `
+var DATA = ` + jsonData + `;
+var selectedPhone = null;
+var currentTab = 'all';
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  var diff = Date.now() - new Date(iso).getTime();
+  var m = Math.floor(diff / 60000);
+  if (m < 1) return 'עכשיו';
+  if (m < 60) return m + ' דק';
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + ' שע';
+  var d = Math.floor(h / 24);
+  if (d === 1) return 'אתמול';
+  if (d < 7) return d + ' ימים';
+  return new Date(iso).toLocaleDateString('he-IL');
+}
+
+function fullTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('he-IL', {hour:'2-digit',minute:'2-digit',day:'numeric',month:'numeric',year:'2-digit'});
+}
+
+function setTab(el) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  el.classList.add('active');
+  currentTab = el.dataset.tab;
+  selectedPhone = null;
+  showEmpty();
+  renderList();
+}
+
+function showEmpty() {
+  document.getElementById('chat-panel').innerHTML = '<div class="empty-state"><div class="icon">💬</div><div>בחר שיחה</div></div>';
+}
+
+function renderList() {
+  var q = document.getElementById('search').value.toLowerCase();
+  var items = DATA.conversations.filter(function(c) {
+    if (currentTab === 'active' && c.conversationClosed) return false;
+    if (currentTab === 'escalated' && !c.escalated) return false;
+    if (q && !c.phone.includes(q) && !(c.name||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  var container = document.getElementById('conv-list');
+  if (items.length === 0) { container.innerHTML = '<div class="no-results">אין תוצאות</div>'; return; }
+  container.innerHTML = items.map(function(c) {
+    var lastMsg = c.messages.length ? c.messages[c.messages.length-1] : null;
+    var preview = lastMsg ? (lastMsg.role==='user' ? lastMsg.content : '← ' + lastMsg.content) : '';
+    if (preview.length > 55) preview = preview.slice(0,55) + '…';
+    var badges = '';
+    if (c.escalated) badges += '<span class="badge b-esc">🔴 Escalated</span>';
+    if (c.dorContactSent) badges += '<span class="badge b-dor">📇 דור</span>';
+    if (c.conversationClosed) badges += '<span class="badge b-closed">✅ סגור</span>';
+    else if (c.followUpSentAt) badges += '<span class="badge b-fu">⏳ follow-up</span>';
+    else badges += '<span class="badge b-active">🟢 פעיל</span>';
+    var displayName = (c.name && c.name !== c.phone) ? esc(c.name) : c.phone;
+    var sel = c.phone === selectedPhone ? ' selected' : '';
+    var hasEsc = c.escalated ? ' has-esc' : '';
+    return '<div class="conv-item' + sel + hasEsc + '" onclick="selectConv(' + JSON.stringify(c.phone) + ')">' +
+      '<div class="ci-row1"><span class="ci-name">' + displayName + '</span><span class="ci-time">' + relTime(c.lastSeen) + '</span></div>' +
+      '<div class="ci-preview">' + esc(preview) + '</div>' +
+      '<div class="badges">' + badges + '</div></div>';
+  }).join('');
+}
+
+function selectConv(phone) {
+  selectedPhone = phone;
+  renderList();
+  var conv = null;
+  for (var i=0; i<DATA.conversations.length; i++) { if (DATA.conversations[i].phone === phone) { conv = DATA.conversations[i]; break; } }
+  if (!conv) return;
+  var displayName = (conv.name && conv.name !== conv.phone) ? esc(conv.name) : conv.phone;
+  var badges = '';
+  if (conv.escalated) badges += '<span class="ch-badge">🔴 Escalated</span>';
+  if (conv.dorContactSent) badges += '<span class="ch-badge">📇 דור נשלח</span>';
+  if (conv.conversationClosed) badges += '<span class="ch-badge">✅ סגור</span>';
+  var msgsHtml = '';
+  if (conv.lastSeen) {
+    msgsHtml += '<div class="date-sep"><span>' + new Date(conv.lastSeen).toLocaleDateString('he-IL', {weekday:'long',day:'numeric',month:'long'}) + '</span></div>';
+  }
+  conv.messages.forEach(function(m) {
+    var isUser = m.role === 'user';
+    msgsHtml += '<div class="bw ' + (isUser?'u':'l') + '"><div class="bubble">' + esc(m.content) + '</div></div>';
+  });
+  if (conv.dorContactSent) msgsHtml += '<div class="sys-note"><span>📇 כרטיס ויזיטה של דור נשלח ללקוח</span></div>';
+  if (conv.conversationClosed) msgsHtml += '<div class="sys-note"><span>✅ שיחה נסגרה</span></div>';
+  var panel = document.getElementById('chat-panel');
+  panel.innerHTML =
+    '<div class="chat-header">' +
+      '<div class="ch-avatar">👤</div>' +
+      '<div class="ch-info"><div class="ch-name">' + displayName + '</div>' +
+      '<div class="ch-sub">' + conv.phone + ' · ' + conv.messages.length + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
+      '<div class="ch-badges">' + badges + '</div>' +
+    '</div>' +
+    '<div class="chat-messages" id="msgs">' + msgsHtml + '</div>';
+  setTimeout(function(){ var el=document.getElementById('msgs'); if(el) el.scrollTop=el.scrollHeight; }, 0);
+}
+
+function showEscalations() {
+  var panel = document.getElementById('chat-panel');
+  if (!DATA.escalations.length) { panel.innerHTML = '<div class="empty-state"><div class="icon">🎉</div><div>אין escalations</div></div>'; return; }
+  var html = DATA.escalations.map(function(e) {
+    return '<div class="esc-card">' +
+      '<div class="esc-meta">' + new Date(e.timestamp).toLocaleString('he-IL') + '</div>' +
+      '<div class="esc-who">' + esc(e.customer) + ' <span style="color:#aaa;font-weight:400;font-size:0.8rem">(' + e.phone + ')</span></div>' +
+      '<div class="esc-q">' + esc(e.question) + '</div></div>';
+  }).join('');
+  panel.innerHTML = '<div class="chat-header"><div class="ch-avatar">🔴</div><div class="ch-info"><div class="ch-name">Escalations Log</div><div class="ch-sub">' + DATA.escalations.length + ' שאלות שלא ידעתי לענות</div></div></div><div class="esc-panel">' + html + '</div>';
+  selectedPhone = null;
+  renderList();
+}
+
+// Init stats
+document.getElementById('s-total').textContent = DATA.stats.total;
+document.getElementById('s-today').textContent = DATA.stats.today;
+document.getElementById('s-esc').textContent = DATA.stats.escalations;
+var rate = DATA.stats.total > 0 ? Math.round(DATA.stats.escalations / DATA.stats.total * 100) : 0;
+document.getElementById('s-rate').textContent = rate + '%';
+
+renderList();`;
+
+  res.send(`<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ליה — לוח בקרה</title>
+<style>${css}</style>
+</head>
+<body>
+<div class="header">
+  <span class="header-title">🥐 ליה</span>
+  <div class="header-stats">
+    <div class="stat"><div class="stat-num" id="s-total">—</div><div class="stat-label">שיחות</div></div>
+    <div class="stat"><div class="stat-num" id="s-today">—</div><div class="stat-label">היום</div></div>
+    <div class="stat"><div class="stat-num" id="s-esc">—</div><div class="stat-label">escalations</div></div>
+    <div class="stat"><div class="stat-num" id="s-rate">—</div><div class="stat-label">esc rate</div></div>
+  </div>
+  <button class="refresh-btn" onclick="location.reload()">🔄 רענן</button>
+</div>
+<div class="main">
+  <div class="sidebar">
+    <div class="search-wrap"><input id="search" type="text" placeholder="חפש לפי שם או מספר..." oninput="renderList()"></div>
+    <div class="tabs">
+      <div class="tab active" data-tab="all" onclick="setTab(this)">הכל</div>
+      <div class="tab" data-tab="active" onclick="setTab(this)">פעיל</div>
+      <div class="tab" data-tab="escalated" onclick="setTab(this)">Escalated</div>
+      <div class="tab" data-tab="log" onclick="setTab(this);showEscalations()">Log</div>
+    </div>
+    <div class="conv-list" id="conv-list"></div>
+  </div>
+  <div class="chat-panel" id="chat-panel">
+    <div class="empty-state"><div class="icon">💬</div><div>בחר שיחה מהרשימה</div></div>
+  </div>
+</div>
+<script>${js}</script>
+</body>
+</html>`);
 });
 
 const PORT = process.env.PORT || 3000;
