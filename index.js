@@ -275,7 +275,7 @@ app.post("/webhook", async (req, res) => {
 
     // Maintain conversation history
     if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName };
+      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
     }
     const conv = conversations[phoneNumber];
     conv.name = customerName;
@@ -286,6 +286,26 @@ app.post("/webhook", async (req, res) => {
     conv.lastSeen = new Date().toISOString();
     if (conv.messages.length > 20) {
       conv.messages = conv.messages.slice(-20);
+    }
+
+    // Notify Dor on new conversation
+    if (conv.messages.length === 1) {
+      await sendWhatsAppMessage(
+        process.env.MANAGER_PHONE,
+        `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`
+      );
+    }
+
+    // Dor has taken over — stay silent and notify him of the reply
+    if (conv.humanMode) {
+      if (conv.messages.length > 1) {
+        await sendWhatsAppMessage(
+          process.env.MANAGER_PHONE,
+          `📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`
+        );
+      }
+      saveConversations();
+      return res.status(200).send("OK");
     }
 
     // Call Claude
@@ -376,6 +396,8 @@ app.get("/conversations", (req, res) => {
       conversationClosed: !!conv.conversationClosed,
       followUpSentAt: conv.followUpSentAt || null,
       escalated: escalatedPhones.has(phone),
+      humanMode: !!conv.humanMode,
+      humanModeSince: conv.humanModeSince || null,
     })),
     escalations: escalations.slice().reverse().slice(0, 100),
     stats: { total: convEntries.length, today: activeToday, escalations: escalations.length },
@@ -418,23 +440,36 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; h
 .b-closed { background: #f3f3f3; color: #888; }
 .b-active { background: #e8f5e9; color: #2e7d32; }
 .b-fu { background: #fff8e1; color: #e65100; }
+.b-human { background: #fff3e0; color: #e65100; }
+.has-human { border-right: 3px solid #ff9800; }
 .chat-panel { flex: 1; display: flex; flex-direction: column; background: #efeae2; overflow: hidden; }
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: #bbb; }
 .empty-state .icon { font-size: 2.5rem; }
-.chat-header { background: #075e54; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.chat-header { background: #075e54; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .ch-avatar { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0; }
-.ch-info { flex: 1; }
+.ch-info { flex: 1; min-width: 0; }
 .ch-name { font-weight: 600; font-size: 0.95rem; }
-.ch-sub { font-size: 0.73rem; opacity: 0.8; }
-.ch-badges { display: flex; gap: 6px; }
+.ch-sub { font-size: 0.73rem; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-badges { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .ch-badge { font-size: 0.7rem; padding: 2px 9px; border-radius: 12px; background: rgba(255,255,255,0.18); }
+.hbtn { border: none; padding: 6px 14px; border-radius: 14px; font-size: 0.78rem; cursor: pointer; font-weight: 600; white-space: nowrap; }
+.hbtn.hijack { background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+.hbtn.hijack:hover { background: rgba(255,255,255,0.28); }
+.hbtn.release { background: #e8f5e9; color: #2e7d32; }
+.ch-back { display: none; background: none; border: none; color: #fff; font-size: 1.1rem; cursor: pointer; padding: 4px 8px; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+.human-banner { background: #fff3e0; color: #bf360c; padding: 8px 16px; font-size: 0.82rem; font-weight: 500; flex-shrink: 0; border-top: 1px solid #ffe0b2; text-align: center; }
+.compose-box { display: flex; gap: 8px; padding: 10px 14px; background: #f0f2f5; border-top: 1px solid #e0e0e0; flex-shrink: 0; align-items: flex-end; }
+.compose-box textarea { flex: 1; border-radius: 20px; border: none; padding: 9px 14px; font-size: 0.88rem; resize: none; outline: none; font-family: inherit; background: #fff; max-height: 100px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.compose-box button { background: #075e54; color: #fff; border: none; border-radius: 50%; width: 40px; height: 40px; font-size: 1.1rem; cursor: pointer; flex-shrink: 0; }
 .bw { display: flex; margin-bottom: 1px; }
 .bw.u { justify-content: flex-end; }
 .bw.l { justify-content: flex-start; }
 .bubble { max-width: 65%; padding: 7px 11px 5px; border-radius: 8px; font-size: 0.88rem; line-height: 1.55; word-break: break-word; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0,0,0,0.07); }
 .bw.u .bubble { background: #d9fdd3; border-radius: 8px 2px 8px 8px; }
 .bw.l .bubble { background: #fff; border-radius: 2px 8px 8px 8px; }
+.dor-bubble { background: #fff8e1; border: 1px solid #ffe082; }
+.dor-label { display: block; font-size: 0.65rem; color: #e65100; margin-top: 2px; }
 .date-sep { text-align: center; margin: 10px 0 6px; }
 .date-sep span { background: #d4d2ce; color: #555; padding: 3px 12px; border-radius: 10px; font-size: 0.71rem; }
 .sys-note { text-align: center; margin: 6px 0; }
@@ -444,49 +479,69 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; h
 .esc-meta { font-size: 0.74rem; color: #aaa; margin-bottom: 5px; }
 .esc-who { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
 .esc-q { background: #fff8f8; border-radius: 6px; padding: 8px 11px; font-size: 0.87rem; color: #444; border-right: 2px solid #ffcdd2; }
-::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }`;
+::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+@media (max-width: 700px) {
+  .sidebar { width: 100%; border-left: none; }
+  .chat-panel { display: none; position: fixed; inset: 0; z-index: 20; background: #efeae2; flex-direction: column; }
+  .chat-panel.mobile-open { display: flex; }
+  .ch-back { display: block; }
+  .header-stats { gap: 12px; }
+  .stat-num { font-size: 1rem; }
+}
+@media (min-width: 701px) {
+  .chat-panel { display: flex; }
+}`;
 
+  const token = req.query.token;
   const js = `
 var DATA = ` + jsonData + `;
+var TOKEN = ` + JSON.stringify(token) + `;
 var selectedPhone = null;
 var currentTab = 'all';
 
-function esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function relTime(iso) {
   if (!iso) return '';
   var diff = Date.now() - new Date(iso).getTime();
-  var m = Math.floor(diff / 60000);
+  var m = Math.floor(diff/60000);
   if (m < 1) return 'עכשיו';
   if (m < 60) return m + ' דק';
-  var h = Math.floor(m / 60);
+  var h = Math.floor(m/60);
   if (h < 24) return h + ' שע';
-  var d = Math.floor(h / 24);
+  var d = Math.floor(h/24);
   if (d === 1) return 'אתמול';
   if (d < 7) return d + ' ימים';
   return new Date(iso).toLocaleDateString('he-IL');
 }
-
 function fullTime(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleString('he-IL', {hour:'2-digit',minute:'2-digit',day:'numeric',month:'numeric',year:'2-digit'});
 }
-
+function updateStats() {
+  document.getElementById('s-total').textContent = DATA.stats.total;
+  document.getElementById('s-today').textContent = DATA.stats.today;
+  document.getElementById('s-esc').textContent = DATA.stats.escalations;
+  var rate = DATA.stats.total > 0 ? Math.round(DATA.stats.escalations / DATA.stats.total * 100) : 0;
+  document.getElementById('s-rate').textContent = rate + '%';
+}
 function setTab(el) {
   document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
   el.classList.add('active');
   currentTab = el.dataset.tab;
   selectedPhone = null;
-  showEmpty();
+  document.getElementById('chat-panel').classList.remove('mobile-open');
+  document.getElementById('chat-panel').innerHTML = '<div class="empty-state"><div class="icon">💬</div><div>בחר שיחה</div></div>';
   renderList();
 }
-
-function showEmpty() {
-  document.getElementById('chat-panel').innerHTML = '<div class="empty-state"><div class="icon">💬</div><div>בחר שיחה</div></div>';
+function mobileBack() {
+  document.getElementById('chat-panel').classList.remove('mobile-open');
+  selectedPhone = null;
+  renderList();
 }
-
+function getConv(phone) {
+  for (var i=0; i<DATA.conversations.length; i++) { if (DATA.conversations[i].phone === phone) return DATA.conversations[i]; }
+  return null;
+}
 function renderList() {
   var q = document.getElementById('search').value.toLowerCase();
   var items = DATA.conversations.filter(function(c) {
@@ -502,75 +557,126 @@ function renderList() {
     var preview = lastMsg ? (lastMsg.role==='user' ? lastMsg.content : '← ' + lastMsg.content) : '';
     if (preview.length > 55) preview = preview.slice(0,55) + '…';
     var badges = '';
+    if (c.humanMode) badges += '<span class="badge b-human">👤 Dor</span>';
     if (c.escalated) badges += '<span class="badge b-esc">🔴 Escalated</span>';
     if (c.dorContactSent) badges += '<span class="badge b-dor">📇 דור</span>';
     if (c.conversationClosed) badges += '<span class="badge b-closed">✅ סגור</span>';
-    else if (c.followUpSentAt) badges += '<span class="badge b-fu">⏳ follow-up</span>';
-    else badges += '<span class="badge b-active">🟢 פעיל</span>';
+    else if (c.followUpSentAt && !c.humanMode) badges += '<span class="badge b-fu">⏳ follow-up</span>';
+    else if (!c.humanMode) badges += '<span class="badge b-active">🟢 פעיל</span>';
     var displayName = (c.name && c.name !== c.phone) ? esc(c.name) : c.phone;
     var sel = c.phone === selectedPhone ? ' selected' : '';
-    var hasEsc = c.escalated ? ' has-esc' : '';
-    return '<div class="conv-item' + sel + hasEsc + '" onclick="selectConv(' + JSON.stringify(c.phone) + ')">' +
+    var borderCls = c.humanMode ? ' has-human' : (c.escalated ? ' has-esc' : '');
+    return '<div class="conv-item' + sel + borderCls + '" data-phone="' + esc(c.phone) + '">' +
       '<div class="ci-row1"><span class="ci-name">' + displayName + '</span><span class="ci-time">' + relTime(c.lastSeen) + '</span></div>' +
       '<div class="ci-preview">' + esc(preview) + '</div>' +
       '<div class="badges">' + badges + '</div></div>';
   }).join('');
 }
-
 function selectConv(phone) {
   selectedPhone = phone;
   renderList();
-  var conv = null;
-  for (var i=0; i<DATA.conversations.length; i++) { if (DATA.conversations[i].phone === phone) { conv = DATA.conversations[i]; break; } }
+  var conv = getConv(phone);
   if (!conv) return;
   var displayName = (conv.name && conv.name !== conv.phone) ? esc(conv.name) : conv.phone;
   var badges = '';
   if (conv.escalated) badges += '<span class="ch-badge">🔴 Escalated</span>';
   if (conv.dorContactSent) badges += '<span class="ch-badge">📇 דור נשלח</span>';
   if (conv.conversationClosed) badges += '<span class="ch-badge">✅ סגור</span>';
+  var hijackBtn = conv.humanMode
+    ? '<button class="hbtn release" onclick="doRelease()">🤖 Return to Lia</button>'
+    : '<button class="hbtn hijack" onclick="doHijack()">👤 Hijack</button>';
   var msgsHtml = '';
   if (conv.lastSeen) {
     msgsHtml += '<div class="date-sep"><span>' + new Date(conv.lastSeen).toLocaleDateString('he-IL', {weekday:'long',day:'numeric',month:'long'}) + '</span></div>';
   }
   conv.messages.forEach(function(m) {
     var isUser = m.role === 'user';
-    msgsHtml += '<div class="bw ' + (isUser?'u':'l') + '"><div class="bubble">' + esc(m.content) + '</div></div>';
+    var isDor = m.sender === 'dor';
+    var cls = isUser ? 'u' : 'l';
+    var bubbleCls = isDor ? 'bubble dor-bubble' : 'bubble';
+    var extra = isDor ? '<span class="dor-label">Dor</span>' : '';
+    msgsHtml += '<div class="bw ' + cls + '"><div class="' + bubbleCls + '">' + esc(m.content) + extra + '</div></div>';
   });
   if (conv.dorContactSent) msgsHtml += '<div class="sys-note"><span>📇 כרטיס ויזיטה של דור נשלח ללקוח</span></div>';
   if (conv.conversationClosed) msgsHtml += '<div class="sys-note"><span>✅ שיחה נסגרה</span></div>';
+  var composeHtml = conv.humanMode
+    ? '<div class="human-banner">👤 Dor mode — Lia is silent. Replies go directly to the customer.</div>' +
+      '<div class="compose-box"><textarea id="compose" placeholder="Type a message to customer..." onkeydown="composeKey(event)"></textarea>' +
+      '<button onclick="doSend()">➤</button></div>'
+    : '';
   var panel = document.getElementById('chat-panel');
   panel.innerHTML =
     '<div class="chat-header">' +
+      '<button class="ch-back" onclick="mobileBack()">‹</button>' +
       '<div class="ch-avatar">👤</div>' +
       '<div class="ch-info"><div class="ch-name">' + displayName + '</div>' +
       '<div class="ch-sub">' + conv.phone + ' · ' + conv.messages.length + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
-      '<div class="ch-badges">' + badges + '</div>' +
+      '<div class="ch-badges">' + badges + hijackBtn + '</div>' +
     '</div>' +
-    '<div class="chat-messages" id="msgs">' + msgsHtml + '</div>';
+    '<div class="chat-messages" id="msgs">' + msgsHtml + '</div>' + composeHtml;
+  panel.classList.add('mobile-open');
   setTimeout(function(){ var el=document.getElementById('msgs'); if(el) el.scrollTop=el.scrollHeight; }, 0);
 }
-
 function showEscalations() {
   var panel = document.getElementById('chat-panel');
-  if (!DATA.escalations.length) { panel.innerHTML = '<div class="empty-state"><div class="icon">🎉</div><div>אין escalations</div></div>'; return; }
+  if (!DATA.escalations.length) { panel.innerHTML = '<div class="empty-state"><div class="icon">🎉</div><div>אין escalations</div></div>'; panel.classList.add('mobile-open'); return; }
   var html = DATA.escalations.map(function(e) {
     return '<div class="esc-card">' +
       '<div class="esc-meta">' + new Date(e.timestamp).toLocaleString('he-IL') + '</div>' +
       '<div class="esc-who">' + esc(e.customer) + ' <span style="color:#aaa;font-weight:400;font-size:0.8rem">(' + e.phone + ')</span></div>' +
       '<div class="esc-q">' + esc(e.question) + '</div></div>';
   }).join('');
-  panel.innerHTML = '<div class="chat-header"><div class="ch-avatar">🔴</div><div class="ch-info"><div class="ch-name">Escalations Log</div><div class="ch-sub">' + DATA.escalations.length + ' שאלות שלא ידעתי לענות</div></div></div><div class="esc-panel">' + html + '</div>';
+  panel.innerHTML = '<div class="chat-header"><button class="ch-back" onclick="mobileBack()">‹</button><div class="ch-avatar">🔴</div><div class="ch-info"><div class="ch-name">Escalations Log</div><div class="ch-sub">' + DATA.escalations.length + ' שאלות</div></div></div><div class="esc-panel">' + html + '</div>';
+  panel.classList.add('mobile-open');
   selectedPhone = null;
   renderList();
 }
-
-// Init stats
-document.getElementById('s-total').textContent = DATA.stats.total;
-document.getElementById('s-today').textContent = DATA.stats.today;
-document.getElementById('s-esc').textContent = DATA.stats.escalations;
-var rate = DATA.stats.total > 0 ? Math.round(DATA.stats.escalations / DATA.stats.total * 100) : 0;
-document.getElementById('s-rate').textContent = rate + '%';
-
+function composeKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }
+function doHijack() {
+  fetch('/hijack?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:selectedPhone})})
+    .then(function(r){return r.json();}).then(function(){
+      var c = getConv(selectedPhone); if(c){c.humanMode=true;c.humanModeSince=new Date().toISOString();}
+      selectConv(selectedPhone); renderList();
+    });
+}
+function doRelease() {
+  fetch('/release?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:selectedPhone})})
+    .then(function(r){return r.json();}).then(function(){
+      var c = getConv(selectedPhone); if(c){c.humanMode=false;c.humanModeSince=null;}
+      selectConv(selectedPhone); renderList();
+    });
+}
+function doSend() {
+  var el = document.getElementById('compose');
+  var msg = el ? el.value.trim() : '';
+  if (!msg) return;
+  if (el) el.value = '';
+  fetch('/send?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:selectedPhone,message:msg})})
+    .then(function(r){return r.json();}).then(function(){
+      var c = getConv(selectedPhone);
+      if (c) c.messages.push({role:'assistant',content:msg,sender:'dor'});
+      selectConv(selectedPhone);
+    });
+}
+// Delegated click — fixes the double-quote onclick bug
+document.getElementById('conv-list').addEventListener('click', function(e) {
+  var item = e.target.closest('.conv-item');
+  if (item && item.dataset.phone) selectConv(item.dataset.phone);
+});
+// Auto-refresh every 30 seconds
+setInterval(function() {
+  fetch('/conversations-data?token='+TOKEN)
+    .then(function(r){return r.json();})
+    .then(function(fresh){
+      DATA.conversations = fresh.conversations;
+      DATA.escalations = fresh.escalations;
+      DATA.stats = fresh.stats;
+      updateStats();
+      renderList();
+      if (selectedPhone) { var still = getConv(selectedPhone); if (still) selectConv(selectedPhone); }
+    }).catch(function(){});
+}, 30000);
+updateStats();
 renderList();`;
 
   res.send(`<!DOCTYPE html>
@@ -612,6 +718,66 @@ renderList();`;
 </html>`);
 });
 
+// Hijack — Dor takes over a conversation
+app.post("/hijack", (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  const { phone } = req.body;
+  if (!conversations[phone]) return res.status(404).json({ error: "Not found" });
+  conversations[phone].humanMode = true;
+  conversations[phone].humanModeSince = new Date().toISOString();
+  saveConversations();
+  res.json({ ok: true });
+});
+
+// Release — hand conversation back to Lia
+app.post("/release", (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  const { phone } = req.body;
+  if (!conversations[phone]) return res.status(404).json({ error: "Not found" });
+  conversations[phone].humanMode = false;
+  conversations[phone].humanModeSince = null;
+  saveConversations();
+  res.json({ ok: true });
+});
+
+// Send — Dor sends a message to a customer
+app.post("/send", async (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  const { phone, message } = req.body;
+  if (!phone || !message) return res.status(400).json({ error: "Missing phone or message" });
+  await sendWhatsAppMessage(phone, message);
+  if (conversations[phone]) {
+    conversations[phone].messages.push({ role: "assistant", content: message, sender: "dor" });
+    conversations[phone].lastSeen = new Date().toISOString();
+    saveConversations();
+  }
+  res.json({ ok: true });
+});
+
+// Conversations data — JSON only, used by dashboard polling
+app.get("/conversations-data", (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  const escalations = fs.existsSync("escalations.json")
+    ? JSON.parse(fs.readFileSync("escalations.json", "utf8"))
+    : [];
+  const escalatedPhones = new Set(escalations.map(e => e.phone));
+  const convEntries = Object.entries(conversations)
+    .filter(([, c]) => c.messages.length > 0)
+    .sort((a, b) => new Date(b[1].lastSeen) - new Date(a[1].lastSeen));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const activeToday = convEntries.filter(([, c]) => c.lastSeen && new Date(c.lastSeen) >= today).length;
+  res.json({
+    conversations: convEntries.map(([phone, conv]) => ({
+      phone, name: conv.name || phone, messages: conv.messages,
+      lastSeen: conv.lastSeen, dorContactSent: !!conv.dorContactSent,
+      conversationClosed: !!conv.conversationClosed, followUpSentAt: conv.followUpSentAt || null,
+      escalated: escalatedPhones.has(phone), humanMode: !!conv.humanMode, humanModeSince: conv.humanModeSince || null,
+    })),
+    escalations: escalations.slice().reverse().slice(0, 100),
+    stats: { total: convEntries.length, today: activeToday, escalations: escalations.length },
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
@@ -625,6 +791,22 @@ app.listen(PORT, async () => {
       if (phone === managerPhone) continue;
       if (conv.conversationClosed || !conv.lastSeen || conv.messages.length === 0) continue;
       const silenceMs = now - new Date(conv.lastSeen).getTime();
+
+      // Auto-release human mode after 30 min of silence
+      if (conv.humanMode) {
+        if (silenceMs > 30 * 60 * 1000) {
+          conv.humanMode = false;
+          conv.humanModeSince = null;
+          saveConversations();
+          await sendWhatsAppMessage(
+            process.env.MANAGER_PHONE,
+            `🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`
+          );
+          console.log(`🤖 Auto-released human mode for ${phone}`);
+        }
+        continue;
+      }
+
       if (!conv.followUpSentAt && silenceMs > FOLLOW_UP_AFTER_MS) {
         const msg = await generateFollowUpMessage(conv, "follow_up");
         await sendWhatsAppMessage(phone, msg);
