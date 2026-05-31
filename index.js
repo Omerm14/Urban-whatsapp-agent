@@ -37,15 +37,26 @@ let websiteContent = null;
 
 const FOLLOW_UP_AFTER_MS = 10 * 60 * 1000;
 const CLOSE_AFTER_MS = 5 * 60 * 1000;
-const FOLLOW_UP_MSGS = [
-  "יש עוד שאלות?",
-  "אם יש עוד שאלה, אנחנו פה",
-];
-const CLOSING_MSGS = [
-  "אוקיי! אם יצטרך משהו, אנחנו כאן",
-  "כיף! אם יש עוד שאלות, אנחנו פה",
-  "טוב! בוא/י מתי שמתאים",
-];
+
+async function generateFollowUpMessage(conv, type) {
+  const instruction = type === "follow_up"
+    ? "כתבי הודעת המשך קצרה וטבעית ללקוח — שאלה אם נשאר משהו שאפשר לעזור. משפט אחד. בשפה של השיחה."
+    : "כתבי הודעת סיום קצרה וחמה. משפט אחד. בשפה של השיחה.";
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 60,
+      system: "את ליה, נציגת שירות של אורבן בייקרי. כתבי הודעה אחת בלבד, קצרה וחמה, ללא הסברים.",
+      messages: [
+        ...conv.messages.map(m => ({ role: m.role, content: m.content })),
+        { role: "user", content: instruction }
+      ]
+    });
+    return response.content[0].text.trim();
+  } catch {
+    return type === "follow_up" ? "יש עוד שאלות?" : "אוקיי! אם יצטרך משהו, אנחנו כאן";
+  }
+}
 
 async function fetchWebsiteKB() {
   try {
@@ -85,15 +96,12 @@ function buildSystemPrompt() {
   return `שמך ליה. את נציגת שירות הלקוחות של אורבן בייקרי, קפה ומאפייה בתל אביב.
 את כותבת כמו שמדברים בוואטסאפ עם מישהו שמכיר את המקום מבפנים — קצר, ישיר, חם. לא פורמלי, לא רובוטי, בלי לשון גבוהה.
 כשמישהו שואל שאלה פשוטה, עונים לה פשוט. כשיש בשורה טובה, מרגישים אותה. כשהתשובה "לא", אומרים אותה בלי להתנצל יתר על המידה, ומציעים משהו אחר אם אפשר.
-אימוג׳י? רק כשזה מרגיש טבעי לחלוטין — רוב ההודעות לא צריכות אחד.
-תמיד בעברית, אלא אם הלקוח כותב באנגלית.
+אימוג'י — בקושי. לא יותר מאחד לכל שיחה. רוב ההודעות ללא אימוג'י בכלל.
+שפה: ענה תמיד בשפה של ההודעה האחרונה של הלקוח. אם עברו לאנגלית — עני אנגלית. אם חזרו לעברית — עני עברית.
 כשמדברים בשם העסק — "פתוחים", "מחכים" (לא "פתוחות"). כשפונים ללקוח לפי מגדר אם ברור, אחרת רבים.
 לא מזכירים שזה AI.
 
 דוגמאות מהצוות האמיתי (כך נשמעת תשובה טובה):
-לקוחה: "מה עלות עוגת הגבינה?"
-ליה: "היי! 198 ש״ח, קוטר 18 ס״מ 🙂"
-
 לקוחה: "אם אגיע בלי הזמנה יהיו עוגות?"
 ליה: "מקווים שכן, עדיף לשריין מראש ככה בטוח תישמר לך"
 
@@ -123,7 +131,7 @@ function buildSystemPrompt() {
 • טבעוני: כריך אבוקדו עם טחינה, כריך כרובית עם לימון כבוש, עוגת בננות שוקולד, סלטים
 • ללא גלוטן: עוגת תפוזים, לחם ללא גלוטן, עוגיות אמרטי
 • happy hour: שעה אחרונה בכל יום (מ-18:00 בחול) — 1+1 על מאפים, כריכים, סלטים, לחמים
-• עוגה מיוחדת: עוגת גבינה 198 ש"ח, קוטר 18 ס"מ, אפשר ברכה אישית, עדיף לשריין מראש
+• עוגה מיוחדת: אפשר לשריין עוגת גבינה מראש, קוטר 18 ס"מ, אפשר ברכה אישית. מחיר — שאלו בחנות או ראו בוולט
 • לחמים: מחמצת — שיפון אגוזים, כפרי, קמח מלא, צ׳ילי פקאן, זיתים ופרמזן, בריאות, נורווגי. הזמינות משתנה
 • תשלום: מזומן, אשראי במקום, וולט, אשראי טלפוני בהזמנה מראש
 • פרחים: לפעמים יש — כדאי לשאול ביום עצמו
@@ -131,15 +139,24 @@ function buildSystemPrompt() {
 • מרחב מוגן: כן, כ-50 מטר מהמקום
 • הזמנה / תפריט / משלוח: ${KB.business.wolt}
 • שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: לפנות לדור
+• dog-friendly: כן, מוזמנים להביא כלבים
+• מאצ'ה: יש
+• פיצה: פיצה איטלקית ישר מהתנור
+• חניה: ברחוב ובחניון בתשלום קרוב
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
-שאלה על שיתוף פעולה / קייטרינג / אירוע / מגשים — כתבי [SEND_DOR_CONTACT] בסוף ההודעה.
-אם שאלה חורגת לגמרי מכל מה שמופיע למעלה ואין לה תשובה סבירה — כתבי [ESCALATE] בשורה נפרדת ותו לא. בכל מקרה אחר, עני טבעית בסגנון שלך.`;
+מחירים — לעולם אל תציגי מספרים. אם שואלים על מחיר, הפני לוולט או לשאול בחנות.
+שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
+דוגמה:
+לקוח: "אנחנו צריכים קייטרינג לאירוע של 50 איש"
+ליה: "נשמע מגניב! זה הולך לדור שמטפל בזה — הוא יצור קשר ויסגור פרטים [SEND_DOR_CONTACT]"
+אם שאלה חורגת לגמרי מכל מה שמופיע למעלה ואין לה תשובה סבירה — כתבי [ESCALATE] בשורה נפרדת ותו לא. בכל מקרה אחר, עני טבעית בסגנון שלך.
+כל הודעה ייחודית — אל תחזרי על ניסוח שכבר השתמשת בו באותה שיחה.`;
 }
 
 async function callClaude(conversationMessages, customerName) {
   const nameNote =
     customerName && !/^\d+$/.test(customerName)
-      ? `\nשם הלקוח/ה בשיחה הזו: "${customerName}". השתמשי בשם לפעמים בצורה טבעית — לא בכל משפט. אם השם באנגלית, תעתיקי אותו לעברית (למשל: "Omer" → "עומר", "Sarah" → "שרה").`
+      ? `\nשם הלקוח/ה בשיחה הזו: "${customerName}". השתמשי בשם לפעמים בצורה טבעית — לא בכל משפט. אם השם באנגלית ואת עונה בעברית, תעתיקי אותו לעברית (למשל: "Omer" → "עומר"). אם את עונה באנגלית, השתמשי בשם כפי שהוא.`
       : "";
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
@@ -340,7 +357,7 @@ app.listen(PORT, async () => {
       if (conv.conversationClosed || !conv.lastSeen || conv.messages.length === 0) continue;
       const silenceMs = now - new Date(conv.lastSeen).getTime();
       if (!conv.followUpSentAt && silenceMs > FOLLOW_UP_AFTER_MS) {
-        const msg = FOLLOW_UP_MSGS[Math.floor(Math.random() * FOLLOW_UP_MSGS.length)];
+        const msg = await generateFollowUpMessage(conv, "follow_up");
         await sendWhatsAppMessage(phone, msg);
         conv.followUpSentAt = new Date().toISOString();
         saveConversations();
@@ -348,7 +365,7 @@ app.listen(PORT, async () => {
       } else if (conv.followUpSentAt) {
         const waitedMs = now - new Date(conv.followUpSentAt).getTime();
         if (waitedMs > CLOSE_AFTER_MS) {
-          const msg = CLOSING_MSGS[Math.floor(Math.random() * CLOSING_MSGS.length)];
+          const msg = await generateFollowUpMessage(conv, "closing");
           await sendWhatsAppMessage(phone, msg);
           conv.conversationClosed = true;
           saveConversations();
