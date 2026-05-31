@@ -521,9 +521,9 @@ function relTime(iso) {
   var diff = Date.now() - new Date(iso).getTime();
   var m = Math.floor(diff/60000);
   if (m < 1) return 'עכשיו';
-  if (m < 60) return m + ' דק\'';
+  if (m < 60) return m + ' דק';
   var h = Math.floor(m/60);
-  if (h < 24) return h + ' שע\'';
+  if (h < 24) return h + ' שע';
   var d = Math.floor(h/24);
   if (d === 1) return 'אתמול';
   if (d < 7) return d + ' ימים';
