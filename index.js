@@ -343,6 +343,61 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", business: KB.business.name });
 });
 
+// Conversations browser — protected by WEBHOOK_VERIFY_TOKEN
+app.get("/conversations", (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) {
+    return res.status(403).send("Forbidden");
+  }
+
+  const escalations = fs.existsSync("escalations.json")
+    ? JSON.parse(fs.readFileSync("escalations.json", "utf8"))
+    : [];
+
+  const convEntries = Object.entries(conversations)
+    .filter(([, c]) => c.messages.length > 0)
+    .sort((a, b) => new Date(b[1].lastSeen) - new Date(a[1].lastSeen));
+
+  const escHtml = escalations.length === 0 ? "<p>None</p>" : escalations
+    .slice().reverse().slice(0, 50)
+    .map(e => `<div class="esc"><span class="ts">${new Date(e.timestamp).toLocaleString("he-IL")}</span> <strong>${e.customer}</strong> (${e.phone}): ${e.question}</div>`)
+    .join("");
+
+  const convsHtml = convEntries.map(([phone, conv]) => {
+    const msgs = conv.messages.map(m => {
+      const cls = m.role === "user" ? "msg user" : "msg lia";
+      const label = m.role === "user" ? "👤" : "🤖 ליה";
+      return `<div class="${cls}"><span class="label">${label}</span> ${m.content.replace(/</g, "&lt;")}</div>`;
+    }).join("");
+    const lastSeen = conv.lastSeen ? new Date(conv.lastSeen).toLocaleString("he-IL") : "—";
+    return `<details><summary><strong>${phone}</strong> — ${conv.messages.length} הודעות | נראה לאחרונה: ${lastSeen}</summary><div class="thread">${msgs}</div></details>`;
+  }).join("");
+
+  res.send(`<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+<title>ליה — שיחות</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; background: #f5f5f5; color: #111; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  h2 { font-size: 1rem; margin: 28px 0 8px; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  details { background: #fff; border-radius: 8px; margin-bottom: 10px; padding: 12px 16px; box-shadow: 0 1px 3px #0001; }
+  summary { cursor: pointer; font-size: 0.95rem; }
+  .thread { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { padding: 6px 10px; border-radius: 8px; font-size: 0.9rem; max-width: 80%; line-height: 1.5; white-space: pre-wrap; }
+  .msg.user { background: #e1ffc7; align-self: flex-end; }
+  .msg.lia { background: #fff; border: 1px solid #e0e0e0; align-self: flex-start; }
+  .label { font-weight: 600; font-size: 0.75rem; display: block; margin-bottom: 2px; color: #888; }
+  .esc { background: #fff3cd; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; font-size: 0.9rem; }
+  .ts { color: #999; font-size: 0.8rem; margin-left: 8px; }
+  .meta { color: #888; font-size: 0.85rem; margin-bottom: 20px; }
+</style></head><body>
+<h1>🥐 ליה — מרכז שיחות</h1>
+<p class="meta">${convEntries.length} שיחות פעילות | ${escalations.length} escalations</p>
+<h2>📋 Escalations אחרונים</h2>
+${escHtml}
+<h2>💬 שיחות (לפי פעילות אחרונה)</h2>
+${convsHtml || "<p>אין שיחות עדיין</p>"}
+</body></html>`);
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
