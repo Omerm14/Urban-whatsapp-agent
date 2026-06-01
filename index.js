@@ -44,14 +44,27 @@ const FOLLOW_UP_AFTER_MS = 10 * 60 * 1000;
 const CLOSE_AFTER_MS = 5 * 60 * 1000;
 
 async function generateFollowUpMessage(conv, type) {
-  const instruction = type === "follow_up"
-    ? "כתבי הודעת המשך קצרה וטבעית ללקוח — שאלה אם נשאר משהו שאפשר לעזור. משפט אחד. בשפה של השיחה."
-    : "כתבי הודעת סיום קצרה וחמה. משפט אחד. בשפה של השיחה.";
+  const lastUserMsg = [...conv.messages].reverse().find(m => m.role === 'user');
+  const lastContent = lastUserMsg ? lastUserMsg.content : '';
+  const latinRatio = (lastContent.match(/[a-zA-Z]/g) || []).length / (lastContent.length || 1);
+  const isEnglish = latinRatio > 0.5;
+
+  let instruction;
+  if (type === "follow_up") {
+    instruction = isEnglish
+      ? "Write one short, natural follow-up asking if there's anything else you can help with. One sentence only. Do not use 'Good luck' or similar phrases."
+      : "כתבי הודעת המשך קצרה וטבעית — שאלה אם נשאר משהו שאפשר לעזור. משפט אחד בלבד. אל תכתבי 'בהצלחה'.";
+  } else {
+    instruction = isEnglish
+      ? "Write one short, warm closing message. One sentence only. Do not use 'Good luck' or similar phrases."
+      : "כתבי הודעת סיום קצרה וחמה. משפט אחד בלבד. אל תכתבי 'בהצלחה'.";
+  }
+
   try {
     const response = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 60,
-      system: "את ליה, נציגת שירות של אורבן בייקרי. כתבי הודעה אחת בלבד, קצרה וחמה, ללא הסברים.",
+      system: "You are Lia, a customer service rep at Urban Bakery Tel Aviv. Write one message only, short and warm, no explanations.",
       messages: [
         ...conv.messages.map(m => ({ role: m.role, content: m.content })),
         { role: "user", content: instruction }
@@ -59,7 +72,9 @@ async function generateFollowUpMessage(conv, type) {
     });
     return response.content[0].text.trim();
   } catch {
-    return type === "follow_up" ? "יש עוד שאלות?" : "אוקיי! אם יצטרך משהו, אנחנו כאן";
+    return type === "follow_up"
+      ? (isEnglish ? "Is there anything else I can help with?" : "יש עוד שאלות?")
+      : (isEnglish ? "If you need anything, we're here!" : "אם יצטרך משהו, אנחנו כאן");
   }
 }
 
