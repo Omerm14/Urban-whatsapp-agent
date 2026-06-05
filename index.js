@@ -57,8 +57,8 @@ async function generateFollowUpMessage(conv, type) {
       : "אל תציגי את עצמך ואל תאמרי את שמך. אסור לכתוב 'יש עוד משהו שאוכל לעזור?' — זה נשמע כמו בוט. כתבי משפט אחד קצר וטבעי. לדוגמה: 'הכל טוב? 😊' / 'יש עוד שאלות?' / 'צריכים עוד משהו?'";
   } else {
     instruction = isEnglish
-      ? "Do NOT introduce yourself or say your name. Write one short, warm goodbye. Examples: 'Have a great day!' / 'See you soon!' / 'Enjoy your visit!'. Keep it simple and genuine. Nothing else."
-      : "אל תציגי את עצמך ואל תאמרי את שמך. כתבי פרידה קצרה וחמה. לדוגמה: 'יום נהדר!' / 'נתראה!' / 'שיהיה טעים!'. פשוט ואמיתי. משפט אחד בלבד.";
+      ? "Do NOT introduce yourself or say your name. Write one short goodbye wishing them a great day and that you look forward to seeing them. Keep it simple and genuine. Nothing else."
+      : "אל תציגי את עצמך ואל תאמרי את שמך. כתבי פרידה קצרה — ברכה ליום נהדר ושמחכים לראותם. פשוט ואמיתי. משפט אחד בלבד.";
   }
 
   try {
