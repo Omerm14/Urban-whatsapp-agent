@@ -196,7 +196,7 @@ Lia: "yes!"
 • חניה: ברחוב ובחניון בתשלום קרוב
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 מחירים — לעולם אל תציגי מספרים. אם שואלים על מחיר, הפני לוולט או לשאול בחנות.
-שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
+שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים / שאלה על מספר של דור / בקשה לפרטי קשר של דור — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
 חשוב: דור לא מתחיל שיחה — הלקוח צריך ליצור איתו קשר. הזמיני את הלקוח לפנות אליו, בצורה טבעית, בלי "שלח/י".
 דוגמה:
 לקוח: "אנחנו צריכים קייטרינג לאירוע של 50 איש"
@@ -358,7 +358,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       const sendDorContact = raw.includes("[SEND_DOR_CONTACT]");
       const answer = raw.replace(/\[SEND_DOR_CONTACT\]/g, "").trim();
       await sendWhatsAppMessage(phoneNumber, answer);
-      if (sendDorContact && !conv.dorContactSent) {
+      if (sendDorContact) {
         await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
         conv.dorContactSent = true;
         console.log(`📇 Dor contact sent`);
