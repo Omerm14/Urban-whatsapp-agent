@@ -50,19 +50,15 @@ async function generateFollowUpMessage(conv, type) {
   const latinRatio = (lastContent.match(/[a-zA-Z]/g) || []).length / (lastContent.length || 1);
   const isEnglish = latinRatio > 0.5;
 
-  const recentExchange = conv.messages.slice(-4)
-    .map(m => `${m.role === 'user' ? 'Customer' : 'Lia'}: ${m.content}`)
-    .join('\n');
-
   let instruction;
   if (type === "follow_up") {
     instruction = isEnglish
-      ? `Based on this recent exchange:\n${recentExchange}\n\nWrite one short, natural follow-up asking if there's anything else you can help with. One sentence only. Do not use 'Good luck' or similar phrases.`
-      : `בהתבסס על השיחה האחרונה:\n${recentExchange}\n\nכתבי הודעת המשך קצרה וטבעית — שאלה אם נשאר משהו שאפשר לעזור. משפט אחד בלבד. אל תכתבי 'בהצלחה'.`;
+      ? "Do NOT continue or reference the previous conversation. Simply ask in one short sentence if there's anything else you can help with today."
+      : "אל תמשיכי את נושא השיחה הקודמת ואל תתייחסי אליו. שאלי במשפט אחד קצר אם יש עוד משהו שאפשר לעזור היום.";
   } else {
     instruction = isEnglish
-      ? `Based on this recent exchange:\n${recentExchange}\n\nWrite one short, warm closing message. One sentence only. Do not use 'Good luck' or similar phrases.`
-      : `בהתבסס על השיחה האחרונה:\n${recentExchange}\n\nכתבי הודעת סיום קצרה וחמה. משפט אחד בלבד. אל תכתבי 'בהצלחה'.`;
+      ? "Do NOT continue or reference the previous conversation. Write one short, warm goodbye — something like 'have a great day!' or 'see you soon!'. Nothing else."
+      : "אל תמשיכי את נושא השיחה הקודמת ואל תתייחסי אליו. כתבי הודעת פרידה קצרה וחמה — משהו כמו 'יום נהדר!' או 'נתראה!'. משפט אחד בלבד.";
   }
 
   try {
@@ -312,6 +308,10 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     }
     const conv = conversations[phoneNumber];
     conv.name = customerName;
+    if (conv.conversationClosed) {
+      conv.messages = [];
+      conv.dorContactSent = false;
+    }
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
     conv.messages.push({ role: "user", content: customerMessage, timestamp: new Date().toISOString() });
