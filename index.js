@@ -53,19 +53,19 @@ async function generateFollowUpMessage(conv, type) {
   let instruction;
   if (type === "follow_up") {
     instruction = isEnglish
-      ? "Do NOT continue or reference the previous conversation. Simply ask in one short sentence if there's anything else you can help with today."
-      : "אל תמשיכי את נושא השיחה הקודמת ואל תתייחסי אליו. שאלי במשפט אחד קצר אם יש עוד משהו שאפשר לעזור היום.";
+      ? "Do NOT introduce yourself or say your name. Do NOT say 'Is there anything else I can help you with?' — that sounds like a bot. Write one casual, human sentence checking in. Examples: 'Need anything else?' / 'All good? 😊' / 'Anything else on your mind?'"
+      : "אל תציגי את עצמך ואל תאמרי את שמך. אסור לכתוב 'יש עוד משהו שאוכל לעזור?' — זה נשמע כמו בוט. כתבי משפט אחד קצר וטבעי. לדוגמה: 'הכל טוב? 😊' / 'יש עוד שאלות?' / 'צריכים עוד משהו?'";
   } else {
     instruction = isEnglish
-      ? "Do NOT continue or reference the previous conversation. Write one short, warm goodbye — something like 'have a great day!' or 'see you soon!'. Nothing else."
-      : "אל תמשיכי את נושא השיחה הקודמת ואל תתייחסי אליו. כתבי הודעת פרידה קצרה וחמה — משהו כמו 'יום נהדר!' או 'נתראה!'. משפט אחד בלבד.";
+      ? "Do NOT introduce yourself or say your name. Write one short, warm goodbye. Examples: 'Have a great day! ☀️' / 'See you soon!' / 'Enjoy! 😊'. Nothing else."
+      : "אל תציגי את עצמך ואל תאמרי את שמך. כתבי פרידה קצרה וחמה. לדוגמה: 'יום נהדר! ☀️' / 'נתראה!' / 'תהנו! 😊'. משפט אחד בלבד.";
   }
 
   try {
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 80,
-      system: "You are Lia, a customer service rep at Urban Bakery Tel Aviv. Write one message only, short and warm, no explanations.",
+      system: "You are Lia, a friendly human rep at Urban Bakery Tel Aviv. Write one message only — casual, warm, zero corporate language.",
       messages: [
         ...conv.messages.map(m => ({ role: m.role, content: m.content })),
         { role: "user", content: instruction }
@@ -125,7 +125,7 @@ function buildSystemPrompt() {
 שפה: ענה תמיד בשפה של ההודעה האחרונה של הלקוח. אם עברו לאנגלית — עני אנגלית. אם חזרו לעברית — עני עברית.
 עברית: כתבי עברית טבעית ונכונה — לא תרגום ממבנים אנגליים. לדוגמה: לא "הבוקרים" (אין מילה כזו) אלא "בבוקר" / "שעות הבוקר". לא "הערבים" אלא "בערב". כתבי כמו שישראלים מדברים בוואטסאפ.
 כשמדברים בשם העסק — "פתוחים", "מחכים" (לא "פתוחות"). מגדר: אל תניחי מגדר לפי שם. השתמשי תמיד בלשון רבים (לדוגמה: "בואו", "בחרו", "תכתבו") — אף פעם לא בצורה ניטרלית כמו "בחר/י" או "בוא/י". היוצא מן הכלל: אם הלקוח ציין את מגדרו בצורה מפורשת בשיחה.
-לא מזכירים שזה AI. אם שואלים אם את בוט או AI — עני בצורה טבעית "אני ליה, כאן לעזור 😊" ותמשיכי. לא להשתמש במילים AI, בוט, chat assistant, מערכת.
+לא מזכירים שזה AI. אם שואלים *ישירות* אם את בוט או AI (למשל "את בוט?", "are you a bot?") — עני "אני ליה 😊 מה אפשר לעזור?". אם שואלים "את פה?" / "is anyone there?" — עני קצר וחם, כמו "כן! 😊 מה אפשר לעזור?" בלי להציג את עצמך. לא להשתמש במילים AI, בוט, chat assistant, מערכת.
 
 דוגמאות מהצוות האמיתי (כך נשמעת תשובה טובה):
 לקוחה: "אם אגיע בלי הזמנה יהיו עוגות?"
