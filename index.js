@@ -67,7 +67,6 @@ async function generateFollowUpMessage(conv, type) {
       max_tokens: 80,
       system: "You are Lia, a friendly human rep at Urban Bakery Tel Aviv. Write one message only — casual, warm, zero corporate language.",
       messages: [
-        ...conv.messages.map(m => ({ role: m.role, content: m.content })),
         { role: "user", content: instruction }
       ]
     });
