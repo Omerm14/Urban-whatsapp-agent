@@ -57,8 +57,8 @@ async function generateFollowUpMessage(conv, type) {
       : "אל תציגי את עצמך ואל תאמרי את שמך. אסור לכתוב 'יש עוד משהו שאוכל לעזור?' — זה נשמע כמו בוט. כתבי משפט אחד קצר וטבעי. לדוגמה: 'הכל טוב? 😊' / 'יש עוד שאלות?' / 'צריכים עוד משהו?'";
   } else {
     instruction = isEnglish
-      ? "Do NOT introduce yourself or say your name. Write one short, warm goodbye. Examples: 'Have a great day! ☀️' / 'See you soon!' / 'Enjoy! 😊'. Nothing else."
-      : "אל תציגי את עצמך ואל תאמרי את שמך. כתבי פרידה קצרה וחמה. לדוגמה: 'יום נהדר! ☀️' / 'נתראה!' / 'תהנו! 😊'. משפט אחד בלבד.";
+      ? "Do NOT introduce yourself or say your name. Write one short, warm goodbye. Examples: 'Have a great day!' / 'See you soon!' / 'Enjoy your visit!'. Keep it simple and genuine. Nothing else."
+      : "אל תציגי את עצמך ואל תאמרי את שמך. כתבי פרידה קצרה וחמה. לדוגמה: 'יום נהדר!' / 'נתראה!' / 'שיהיה טעים!'. פשוט ואמיתי. משפט אחד בלבד.";
   }
 
   try {
@@ -189,6 +189,8 @@ Lia: "yes!"
 • מאצ'ה: יש
 • פיצה: פיצה איטלקית ישר מהתנור
 • חניה: ברחוב ובחניון בתשלום קרוב
+• חלות: כל יום שישי מ-7:00, אי אפשר לשריין מראש — מומלץ להגיע מוקדם לפני שנגמר
+• סוגי חלב: שיבולת שועל, סויה, שקדים, אורז
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 מחירים — לעולם אל תציגי מספרים. אם שואלים על מחיר, הפני לוולט או לשאול בחנות.
 שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים / שאלה על מספר של דור / בקשה לפרטי קשר של דור — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
