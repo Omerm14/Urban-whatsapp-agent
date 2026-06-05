@@ -11,6 +11,7 @@ app.use(express.json());
 const KB = JSON.parse(fs.readFileSync("kb.json", "utf8"));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const pendingEscalations = []; // { customerPhone, customerName, question, timestamp }
+const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 const DATA_DIR = process.env.DATA_DIR || ".";
 const CONV_FILE = path.join(DATA_DIR, "conversations.json");
@@ -49,15 +50,19 @@ async function generateFollowUpMessage(conv, type) {
   const latinRatio = (lastContent.match(/[a-zA-Z]/g) || []).length / (lastContent.length || 1);
   const isEnglish = latinRatio > 0.5;
 
+  const recentExchange = conv.messages.slice(-4)
+    .map(m => `${m.role === 'user' ? 'Customer' : 'Lia'}: ${m.content}`)
+    .join('\n');
+
   let instruction;
   if (type === "follow_up") {
     instruction = isEnglish
-      ? "Write one short, natural follow-up asking if there's anything else you can help with. One sentence only. Do not use 'Good luck' or similar phrases."
-      : "כתבי הודעת המשך קצרה וטבעית — שאלה אם נשאר משהו שאפשר לעזור. משפט אחד בלבד. אל תכתבי 'בהצלחה'.";
+      ? `Based on this recent exchange:\n${recentExchange}\n\nWrite one short, natural follow-up asking if there's anything else you can help with. One sentence only. Do not use 'Good luck' or similar phrases.`
+      : `בהתבסס על השיחה האחרונה:\n${recentExchange}\n\nכתבי הודעת המשך קצרה וטבעית — שאלה אם נשאר משהו שאפשר לעזור. משפט אחד בלבד. אל תכתבי 'בהצלחה'.`;
   } else {
     instruction = isEnglish
-      ? "Write one short, warm closing message. One sentence only. Do not use 'Good luck' or similar phrases."
-      : "כתבי הודעת סיום קצרה וחמה. משפט אחד בלבד. אל תכתבי 'בהצלחה'.";
+      ? `Based on this recent exchange:\n${recentExchange}\n\nWrite one short, warm closing message. One sentence only. Do not use 'Good luck' or similar phrases.`
+      : `בהתבסס על השיחה האחרונה:\n${recentExchange}\n\nכתבי הודעת סיום קצרה וחמה. משפט אחד בלבד. אל תכתבי 'בהצלחה'.`;
   }
 
   try {
@@ -119,8 +124,8 @@ function buildSystemPrompt() {
 אל תשתמשי בניסוחים שליליים — לא "לא הכי נוח", לא "לא ממש", לא "אבל זה לא מושלם". אם משהו קיים — אמרי אותו בצורה חיובית וישירה.
 אימוג'י — בקושי. לא יותר מאחד לכל שיחה. רוב ההודעות ללא אימוג'י בכלל.
 שפה: ענה תמיד בשפה של ההודעה האחרונה של הלקוח. אם עברו לאנגלית — עני אנגלית. אם חזרו לעברית — עני עברית.
-כשמדברים בשם העסק — "פתוחים", "מחכים" (לא "פתוחות"). כשפונים ללקוח לפי מגדר אם ברור, אחרת רבים.
-לא מזכירים שזה AI.
+כשמדברים בשם העסק — "פתוחים", "מחכים" (לא "פתוחות"). מגדר: אל תניחי מגדר לפי שם. השתמשי תמיד בלשון רבים (לדוגמה: "בואו", "בחרו", "תכתבו") — אף פעם לא בצורה ניטרלית כמו "בחר/י" או "בוא/י". היוצא מן הכלל: אם הלקוח ציין את מגדרו בצורה מפורשת בשיחה.
+לא מזכירים שזה AI. אם שואלים אם את בוט או AI — עני בצורה טבעית "אני ליה, כאן לעזור 😊" ותמשיכי. לא להשתמש במילים AI, בוט, chat assistant, מערכת.
 
 דוגמאות מהצוות האמיתי (כך נשמעת תשובה טובה):
 לקוחה: "אם אגיע בלי הזמנה יהיו עוגות?"
@@ -152,7 +157,7 @@ function buildSystemPrompt() {
 • טבעוני: כריך אבוקדו עם טחינה, כריך כרובית עם לימון כבוש, עוגת בננות שוקולד, סלטים
 • ללא גלוטן: עוגת תפוזים, לחם ללא גלוטן, עוגיות אמרטי
 • happy hour: שעה אחרונה בכל יום (מ-18:00 בחול) — 1+1 על מאפים, כריכים, סלטים, לחמים
-• עוגה מיוחדת: אפשר לשריין עוגת גבינה מראש, קוטר 18 ס"מ, אפשר ברכה אישית. מחיר — שאלו בחנות או ראו בוולט
+• עוגה מיוחדת: יש כמה סוגים של עוגת גבינה, מחירים משתנים — כדאי לבדוק בוולט או להגיע. אפשר לשריין מראש עם ברכה אישית
 • לחמים: מחמצת — שיפון אגוזים, כפרי, קמח מלא, צ׳ילי פקאן, זיתים ופרמזן, בריאות, נורווגי. הזמינות משתנה
 • תשלום: מזומן, אשראי במקום, וולט, אשראי טלפוני בהזמנה מראש
 • פרחים: לפעמים יש — כדאי לשאול ביום עצמו
@@ -166,7 +171,7 @@ function buildSystemPrompt() {
 • חניה: ברחוב ובחניון בתשלום קרוב
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 מחירים — לעולם אל תציגי מספרים. אם שואלים על מחיר, הפני לוולט או לשאול בחנות.
-שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
+שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
 חשוב: דור לא מתחיל שיחה — הלקוח צריך ליצור איתו קשר. הזמיני את הלקוח לפנות אליו, בצורה טבעית, בלי "שלח/י".
 דוגמה:
 לקוח: "אנחנו צריכים קייטרינג לאירוע של 50 איש"
@@ -180,10 +185,16 @@ async function callClaude(conversationMessages, customerName) {
     customerName && !/^\d+$/.test(customerName)
       ? `\nשם הלקוח/ה בשיחה הזו: "${customerName}". השתמשי בשם לפעמים בצורה טבעית — לא בכל משפט. אם השם באנגלית ואת עונה בעברית, תעתיקי אותו לעברית (למשל: "Omer" → "עומר"). אם את עונה באנגלית, השתמשי בשם כפי שהוא.`
       : "";
+  const lastUserMsg = [...conversationMessages].reverse().find(m => m.role === 'user');
+  const lastContent = lastUserMsg ? lastUserMsg.content : '';
+  const latinRatio = (lastContent.match(/[a-zA-Z]/g) || []).length / (lastContent.length || 1);
+  const langNote = latinRatio > 0.5
+    ? "\nIMPORTANT: The customer's last message is in English. You MUST respond in English only."
+    : "";
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 512,
-    system: buildSystemPrompt() + nameNote,
+    system: buildSystemPrompt() + nameNote + langNote,
     messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
   });
   return response.content[0].text;
@@ -269,37 +280,13 @@ async function handleManagerReply(answer) {
   console.log(`📚 KB updated: "${pending.question}"`);
 }
 
-// Receive messages from WhatsApp
-app.post("/webhook", async (req, res) => {
+async function processMessage(phoneNumber, customerMessage, customerName) {
   try {
-    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
-    const message = value?.messages?.[0];
-    const contact = value?.contacts?.[0];
-
-    if (!message || !contact || message.type !== "text") {
-      return res.status(200).send("OK");
-    }
-
-    const phoneNumber = message.from;
-    const customerMessage = message.text.body;
-    const customerName = contact.profile?.name || phoneNumber;
-
-    console.log(`📱 ${customerName}: ${customerMessage}`);
-
-    // Route manager replies to handleManagerReply
-    const managerPhone = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
-    if (phoneNumber === managerPhone) {
-      await handleManagerReply(customerMessage);
-      return res.status(200).send("OK");
-    }
-
-    // Maintain conversation history
     if (!conversations[phoneNumber]) {
       conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
     }
     const conv = conversations[phoneNumber];
     conv.name = customerName;
-    // Reset follow-up/close state when customer writes again
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
     conv.messages.push({ role: "user", content: customerMessage, timestamp: new Date().toISOString() });
@@ -308,7 +295,6 @@ app.post("/webhook", async (req, res) => {
       conv.messages = conv.messages.slice(-20);
     }
 
-    // Notify Dor on new conversation
     if (conv.messages.length === 1) {
       await sendWhatsAppMessage(
         process.env.MANAGER_PHONE,
@@ -316,7 +302,6 @@ app.post("/webhook", async (req, res) => {
       );
     }
 
-    // Dor has taken over — stay silent and notify him of the reply
     if (conv.humanMode) {
       if (conv.messages.length > 1) {
         await sendWhatsAppMessage(
@@ -325,14 +310,12 @@ app.post("/webhook", async (req, res) => {
         );
       }
       saveConversations();
-      return res.status(200).send("OK");
+      return;
     }
 
-    // Call Claude
     const raw = await callClaude(conv.messages, customerName);
 
     if (raw.includes("[ESCALATE]")) {
-      // Escalate to Dor silently — customer gets Dor's reply directly via handleManagerReply
       pendingEscalations.push({
         customerPhone: phoneNumber,
         customerName: customerName,
@@ -359,11 +342,46 @@ app.post("/webhook", async (req, res) => {
       saveConversations();
       console.log(`✅ Answered`);
     }
-
-    res.status(200).send("OK");
   } catch (error) {
-    console.error("❌ Error:", error.message);
-    res.status(200).send("OK");
+    console.error("❌ processMessage error:", error.message);
+  }
+}
+
+// Receive messages from WhatsApp
+app.post("/webhook", async (req, res) => {
+  res.status(200).send("OK");
+  try {
+    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+    const message = value?.messages?.[0];
+    const contact = value?.contacts?.[0];
+
+    if (!message || !contact || message.type !== "text") return;
+
+    const phoneNumber = message.from;
+    const customerMessage = message.text.body;
+    const customerName = contact.profile?.name || phoneNumber;
+
+    console.log(`📱 ${customerName}: ${customerMessage}`);
+
+    const managerPhone = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
+    if (phoneNumber === managerPhone) {
+      await handleManagerReply(customerMessage);
+      return;
+    }
+
+    if (!messageQueues[phoneNumber]) messageQueues[phoneNumber] = { messages: [], timer: null };
+    const queue = messageQueues[phoneNumber];
+    queue.messages.push({ text: customerMessage, name: customerName });
+    if (queue.timer) clearTimeout(queue.timer);
+    queue.timer = setTimeout(async () => {
+      const batch = messageQueues[phoneNumber]?.messages || [];
+      delete messageQueues[phoneNumber];
+      const combined = batch.map(m => m.text).join('\n');
+      const name = batch[batch.length - 1].name;
+      await processMessage(phoneNumber, combined, name);
+    }, 10 * 1000);
+  } catch (error) {
+    console.error("❌ Webhook error:", error.message);
   }
 });
 
