@@ -3,3 +3,6 @@ node_modules/
 escalations.json
 conversations.json
 chat-history/extracted/
+# Real exported WhatsApp chats (PII). Kept locally / in secure storage for KB
+# tuning only — never tracked in git.
+chat-history/*.zip

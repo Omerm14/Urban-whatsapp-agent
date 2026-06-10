@@ -60,8 +60,13 @@ Set in Railway → Variables (never commit to git):
 | `WHATSAPP_API_TOKEN` | Meta access token — **expires ~24h in dev mode**, needs refresh or permanent System User token |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `MANAGER_PHONE` | `+9720546408547` (Dor) |
-| `WEBHOOK_VERIFY_TOKEN` | `urban_bakery_secret_2026` |
+| `WEBHOOK_VERIFY_TOKEN` | `urban_bakery_secret_2026` (also protects the `/conversations` dashboard) |
+| `META_APP_SECRET` | Meta App secret (App → Settings → Basic). Verifies webhook `X-Hub-Signature-256`. If unset, verification is skipped (logged) so the webhook keeps working |
 | `PORT` | `8080` (Railway default) |
+
+> **PII note**: `chat-history/*.zip` are real exported WhatsApp chats used once to
+> tune the agent's tone + seed the KB. They are **untracked** from git (kept in
+> secure storage for KB work only).
 
 ---
 

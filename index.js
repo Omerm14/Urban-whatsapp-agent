@@ -4,9 +4,13 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const Anthropic = require("@anthropic-ai/sdk").default;
+const { verifyMetaSignature } = require("./lib/verifySignature");
+const { isDuplicate } = require("./lib/dedup");
 
 const app = express();
-app.use(express.json());
+// Capture the raw body so we can verify Meta's HMAC signature over the exact
+// bytes Meta signed (JSON re-serialization would change them).
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 const KB = JSON.parse(fs.readFileSync("kb.json", "utf8"));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -285,7 +289,10 @@ async function handleManagerReply(answer) {
     return;
   }
 
-  const pending = pendingEscalations.shift();
+  // Route to the MOST RECENT escalation the manager was prompted about (LIFO),
+  // not a global FIFO — otherwise a reply could go to the wrong customer when
+  // several escalations are pending.
+  const pending = pendingEscalations.pop();
 
   await sendWhatsAppMessage(pending.customerPhone, answer);
 
@@ -344,6 +351,12 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     const raw = await callClaude(conv.messages, customerName);
 
     if (raw.includes("[ESCALATE]")) {
+      // De-dupe by customer so a repeated escalation doesn't queue multiple
+      // pending entries for the same person.
+      const existingIdx = pendingEscalations.findIndex(
+        (e) => e.customerPhone === phoneNumber
+      );
+      if (existingIdx !== -1) pendingEscalations.splice(existingIdx, 1);
       pendingEscalations.push({
         customerPhone: phoneNumber,
         customerName: customerName,
@@ -377,6 +390,19 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
 
 // Receive messages from WhatsApp
 app.post("/webhook", async (req, res) => {
+  // Verify Meta's signature over the raw body before doing anything. Fails open
+  // if META_APP_SECRET isn't configured yet (see lib/verifySignature.js).
+  const sig = verifyMetaSignature(req);
+  if (!sig.ok) {
+    console.warn(`🔒 Webhook signature rejected: ${sig.reason}`);
+    return res.status(401).send("Unauthorized");
+  }
+  if (sig.reason === "no-secret-configured") {
+    console.warn(
+      "🔒 META_APP_SECRET not set — skipping signature verification. Set it in Railway to enable."
+    );
+  }
+
   res.status(200).send("OK");
   try {
     const value = req.body?.entry?.[0]?.changes?.[0]?.value;
@@ -384,6 +410,12 @@ app.post("/webhook", async (req, res) => {
     const contact = value?.contacts?.[0];
 
     if (!message || !contact || message.type !== "text") return;
+
+    // Drop duplicate deliveries (Meta retries) before any processing.
+    if (isDuplicate(message.id)) {
+      console.log(`🔁 Duplicate message ${message.id} ignored`);
+      return;
+    }
 
     const phoneNumber = message.from;
     const customerMessage = message.text.body;
