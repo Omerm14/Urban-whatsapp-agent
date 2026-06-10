@@ -12,14 +12,37 @@ const app = express();
 // bytes Meta signed (JSON re-serialization would change them).
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
-const KB = JSON.parse(fs.readFileSync("kb.json", "utf8"));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const pendingEscalations = []; // { customerPhone, customerName, question, timestamp }
-const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 const DATA_DIR = process.env.DATA_DIR || ".";
 const CONV_FILE = path.join(DATA_DIR, "conversations.json");
 const ESC_FILE  = path.join(DATA_DIR, "escalations.json");
+const KB_FILE   = path.join(DATA_DIR, "kb.json");
+const PENDING_ESC_FILE = path.join(DATA_DIR, "pending_escalations.json");
+
+function loadKB() {
+  if (fs.existsSync(KB_FILE)) {
+    return JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
+  }
+  const seed = JSON.parse(fs.readFileSync("kb.json", "utf8"));
+  fs.writeFileSync(KB_FILE, JSON.stringify(seed, null, 2));
+  return seed;
+}
+
+function loadPendingEscalations() {
+  try {
+    return fs.existsSync(PENDING_ESC_FILE)
+      ? JSON.parse(fs.readFileSync(PENDING_ESC_FILE, "utf8"))
+      : [];
+  } catch { return []; }
+}
+function savePendingEscalations() {
+  fs.writeFileSync(PENDING_ESC_FILE, JSON.stringify(pendingEscalations, null, 2));
+}
+
+const KB = loadKB();
+const pendingEscalations = loadPendingEscalations();
+const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 function loadConversations() {
   try {
@@ -293,6 +316,7 @@ async function handleManagerReply(answer) {
   // not a global FIFO — otherwise a reply could go to the wrong customer when
   // several escalations are pending.
   const pending = pendingEscalations.pop();
+  savePendingEscalations();
 
   await sendWhatsAppMessage(pending.customerPhone, answer);
 
@@ -301,7 +325,7 @@ async function handleManagerReply(answer) {
     question: pending.question,
     answer: answer,
   });
-  fs.writeFileSync("kb.json", JSON.stringify(KB, null, 2));
+  fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
 
   await sendWhatsAppMessage(
     process.env.MANAGER_PHONE,
@@ -324,13 +348,19 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     }
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
+    // Capture lastSeen before updating it — used below to detect a new session.
+    const prevLastSeen = conv.lastSeen;
     conv.messages.push({ role: "user", content: customerMessage, timestamp: new Date().toISOString() });
     conv.lastSeen = new Date().toISOString();
     if (conv.messages.length > 20) {
       conv.messages = conv.messages.slice(-20);
     }
 
-    if (conv.messages.length === 1) {
+    // Notify Dor on any new session (first ever message, or returning after 4h gap).
+    const SESSION_GAP_MS = 4 * 60 * 60 * 1000;
+    const isNewSession = !prevLastSeen ||
+      (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
+    if (isNewSession) {
       await sendWhatsAppMessage(
         process.env.MANAGER_PHONE,
         `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`
@@ -368,6 +398,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
         `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`
       );
       logEscalation(customerName, phoneNumber, customerMessage);
+      savePendingEscalations();
       saveConversations();
       console.log(`⚠️  Escalated`);
     } else {
