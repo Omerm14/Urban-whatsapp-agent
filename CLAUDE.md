@@ -62,6 +62,7 @@ Set in Railway → Variables (never commit to git):
 | `MANAGER_PHONE` | `+9720546408547` (Dor) |
 | `WEBHOOK_VERIFY_TOKEN` | `urban_bakery_secret_2026` (also protects the `/conversations` dashboard) |
 | `META_APP_SECRET` | Meta App secret (App → Settings → Basic). Verifies webhook `X-Hub-Signature-256`. If unset, verification is skipped (logged) so the webhook keeps working |
+| `DATA_DIR` | `/data` — Railway volume mount. Persists `conversations.json`, `escalations.json`, `pending_escalations.json`, and `kb.json` across redeploys. Defaults to `.` locally |
 | `PORT` | `8080` (Railway default) |
 
 > **PII note**: `chat-history/*.zip` are real exported WhatsApp chats used once to
@@ -78,9 +79,9 @@ Set in Railway → Variables (never commit to git):
 |----------|--------|-------------|
 | `/webhook` | GET | Meta webhook verification |
 | `/webhook` | POST | Receive WhatsApp messages |
-| `/health` | GET | Health check |
+| `/health` | GET | Health check — returns `{ status, business, uptime_s, metrics }` where `metrics` = `{ answered, escalated, sendFailed }` (in-memory counters, reset on redeploy) |
 
-**Deploy**: Push to `claude/inspiring-hopper-azDsq` → Railway auto-deploys.
+**Deploy**: Push to `Main-Branch` → Railway auto-deploys.
 
 ---
 

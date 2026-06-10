@@ -20,6 +20,10 @@ const ESC_FILE  = path.join(DATA_DIR, "escalations.json");
 const KB_FILE   = path.join(DATA_DIR, "kb.json");
 const PENDING_ESC_FILE = path.join(DATA_DIR, "pending_escalations.json");
 
+// In-process counters for at-a-glance monitoring via GET /health.
+// Reset on redeploy — acceptable for a quick health snapshot, not analytics.
+const metrics = { answered: 0, escalated: 0, sendFailed: 0 };
+
 function loadKB() {
   if (fs.existsSync(KB_FILE)) {
     return JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
@@ -266,6 +270,7 @@ async function sendWhatsAppMessage(phoneNumber, message) {
     );
     console.log(`✉️  Sent to ${phoneNumber}`);
   } catch (error) {
+    metrics.sendFailed++;
     console.error("Failed to send:", error.response?.data || error.message);
   }
 }
@@ -400,6 +405,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       logEscalation(customerName, phoneNumber, customerMessage);
       savePendingEscalations();
       saveConversations();
+      metrics.escalated++;
       console.log(`⚠️  Escalated`);
     } else {
       const sendDorContact = raw.includes("[SEND_DOR_CONTACT]");
@@ -412,6 +418,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       }
       conv.messages.push({ role: "assistant", content: answer, timestamp: new Date().toISOString() });
       saveConversations();
+      metrics.answered++;
       console.log(`✅ Answered`);
     }
   } catch (error) {
@@ -492,7 +499,12 @@ app.get("/webhook", (req, res) => {
 
 // Health check
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok", business: KB.business.name });
+  res.status(200).json({
+    status: "ok",
+    business: KB.business.name,
+    uptime_s: Math.round(process.uptime()),
+    metrics,
+  });
 });
 
 // Conversations dashboard — protected by WEBHOOK_VERIFY_TOKEN
