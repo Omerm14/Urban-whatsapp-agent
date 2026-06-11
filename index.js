@@ -27,10 +27,14 @@ const metrics = { answered: 0, escalated: 0, sendFailed: 0 };
 const MANAGER_PHONE = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
 
 function loadKB() {
-  if (fs.existsSync(KB_FILE)) {
-    return JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
-  }
   const seed = JSON.parse(fs.readFileSync("kb.json", "utf8"));
+  try {
+    if (fs.existsSync(KB_FILE)) {
+      const persisted = JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
+      const customEntries = (persisted.faq || []).filter(qa => qa.id?.startsWith("custom_"));
+      if (customEntries.length > 0) seed.faq = [...seed.faq, ...customEntries];
+    }
+  } catch { /* fall back to seed only */ }
   fs.writeFileSync(KB_FILE, JSON.stringify(seed, null, 2));
   return seed;
 }
