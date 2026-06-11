@@ -261,6 +261,26 @@ async function callClaude(conversationMessages, customerName) {
   return response.content[0].text;
 }
 
+async function sendWhatsAppTemplate(phoneNumber, templateName) {
+  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
+  try {
+    await axios.post(
+      url,
+      {
+        messaging_product: "whatsapp",
+        to: phoneNumber,
+        type: "template",
+        template: { name: templateName, language: { code: "he" } },
+      },
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
+    );
+    console.log(`📋 Template "${templateName}" sent to ${phoneNumber}`);
+  } catch (error) {
+    metrics.sendFailed++;
+    console.error("Failed to send template:", error.response?.data || error.message);
+  }
+}
+
 async function sendWhatsAppMessage(phoneNumber, message) {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   try {
@@ -1051,6 +1071,22 @@ app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
   console.log(`Webhook: http://localhost:${PORT}/webhook`);
   websiteContent = await fetchWebsiteKB();
+
+  // Daily 8am ping to Dor — opens the 24-hour WhatsApp window so free-form
+  // manager notifications flow through the rest of the day without needing templates.
+  (function scheduleDailyPing() {
+    const ISRAEL_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const nowIsrael = new Date(Date.now() + ISRAEL_OFFSET_MS);
+    const next8am = new Date(nowIsrael);
+    next8am.setUTCHours(5, 0, 0, 0); // 05:00 UTC = 08:00 Israel
+    if (nowIsrael >= next8am) next8am.setUTCDate(next8am.getUTCDate() + 1);
+    const msUntil = next8am.getTime() - nowIsrael.getTime();
+    console.log(`⏰ Daily Dor ping scheduled in ${Math.round(msUntil / 60000)} min`);
+    setTimeout(() => {
+      sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+      setInterval(() => sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping"), 24 * 60 * 60 * 1000);
+    }, msUntil);
+  })();
 
   setInterval(async () => {
     const now = Date.now();
