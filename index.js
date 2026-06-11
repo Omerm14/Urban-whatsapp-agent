@@ -134,7 +134,9 @@ async function fetchWebsiteKB() {
   }
 }
 
-function buildSystemPrompt() {
+const DOR_CONTACT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function buildSystemPrompt(dorContactSentAt) {
   const websiteSection = websiteContent
     ? `\nמידע נוסף מהאתר הרשמי (urbanbakery.co):\n${websiteContent}\n`
     : "";
@@ -153,6 +155,7 @@ function buildSystemPrompt() {
 לא לסיים כל הודעה בשאלה. לפעמים אפשר פשוט לענות ולסיים.
 לפעמים התשובה היא שתי מילים. לפעמים שני משפטים. תלוי בשאלה — לא כל תשובה צריכה להיות אותו אורך.
 אל תחזרי על מידע שכבר שיתפת בשיחה הזאת. אם כבר שלחת קישור או פרט — אל תשלחי אותו שוב בתשובה אחרת.
+אל תשתמשי בקו מפריד (–, -) בתוך משפטים. במקום זאת, כתבי משפטים קצרים ורציפים או השתמשי בפסיק.
 ענה רק על מה שנשאל. אל תוסיפי מידע שלא ביקשו — לדוגמה, אם שאלו על שתייה בכלל, אל תפרטי סוגי חלב אלא אם שאלו על זה ספציפית.
 שפה: ענה תמיד בשפה של ההודעה האחרונה של הלקוח. אם עברו לאנגלית — עני אנגלית. אם חזרו לעברית — עני עברית.
 עברית: כתבי עברית טבעית ונכונה — לא תרגום ממבנים אנגליים. לדוגמה: לא "הבוקרים" (אין מילה כזו) אלא "בבוקר" / "שעות הבוקר". לא "הערבים" אלא "בערב". כתבי כמו שישראלים מדברים בוואטסאפ.
@@ -226,7 +229,7 @@ Lia: "yes!"
 • סוגי חלב: שיבולת שועל, סויה, שקדים, אורז
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 מחירים — לעולם אל תציגי מספרים. אם שואלים על מחיר, הפני לוולט או לשאול בחנות.
-שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים / שאלה על מספר של דור / בקשה לפרטי קשר של דור — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
+שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים / שאלה על מספר של דור / בקשה לפרטי קשר של דור — זה תחום של דור. ${dorContactSentAt ? "כבר שלחנו ללקוח את פרטי דור בשיחה הזאת — אל תכתבי [SEND_DOR_CONTACT] שוב, רק הפני אותו לפנות לדור." : "כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל."}
 חשוב: דור לא מתחיל שיחה — הלקוח צריך ליצור איתו קשר. הזמיני את הלקוח לפנות אליו, בצורה טבעית, בלי "שלח/י".
 דוגמה:
 לקוח: "אנחנו צריכים קייטרינג לאירוע של 50 איש"
@@ -235,7 +238,7 @@ ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 כל הודעה ייחודית — אל תחזרי על ניסוח שכבר השתמשת בו באותה שיחה.`;
 }
 
-async function callClaude(conversationMessages, customerName) {
+async function callClaude(conversationMessages, customerName, dorContactSentAt) {
   const nameNote =
     customerName && !/^\d+$/.test(customerName)
       ? `\nשם הלקוח/ה בשיחה הזו: "${customerName}". השתמשי בשם לפעמים בצורה טבעית — לא בכל משפט. אם השם באנגלית ואת עונה בעברית, תעתיקי אותו לעברית (למשל: "Omer" → "עומר"). אם את עונה באנגלית, השתמשי בשם כפי שהוא.`
@@ -249,7 +252,7 @@ async function callClaude(conversationMessages, customerName) {
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 512,
-    system: buildSystemPrompt() + nameNote + langNote,
+    system: buildSystemPrompt(dorContactSentAt) + nameNote + langNote,
     messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
   });
   return response.content[0].text;
@@ -343,13 +346,13 @@ async function handleManagerReply(answer) {
 async function processMessage(phoneNumber, customerMessage, customerName) {
   try {
     if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
+      conversations[phoneNumber] = { messages: [], dorContactSentAt: null, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
     }
     const conv = conversations[phoneNumber];
     conv.name = customerName;
     if (conv.conversationClosed) {
       conv.messages = [];
-      conv.dorContactSent = false;
+      conv.dorContactSentAt = null;
     }
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
@@ -383,7 +386,10 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       return;
     }
 
-    const raw = await callClaude(conv.messages, customerName);
+    const dorContactRecentlySent = conv.dorContactSentAt &&
+      (Date.now() - new Date(conv.dorContactSentAt).getTime() < DOR_CONTACT_COOLDOWN_MS)
+      ? conv.dorContactSentAt : null;
+    const raw = await callClaude(conv.messages, customerName, dorContactRecentlySent);
 
     if (raw.includes("[ESCALATE]")) {
       // De-dupe by customer so a repeated escalation doesn't queue multiple
@@ -411,10 +417,12 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       const sendDorContact = raw.includes("[SEND_DOR_CONTACT]");
       const answer = raw.replace(/\[SEND_DOR_CONTACT\]/g, "").trim();
       await sendWhatsAppMessage(phoneNumber, answer);
-      if (sendDorContact) {
+      if (sendDorContact && !dorContactRecentlySent) {
         await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
-        conv.dorContactSent = true;
+        conv.dorContactSentAt = new Date().toISOString();
         console.log(`📇 Dor contact sent`);
+      } else if (sendDorContact && dorContactRecentlySent) {
+        console.log(`📇 Dor contact skipped (sent recently)`);
       }
       conv.messages.push({ role: "assistant", content: answer, timestamp: new Date().toISOString() });
       saveConversations();
