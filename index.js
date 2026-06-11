@@ -24,6 +24,8 @@ const PENDING_ESC_FILE = path.join(DATA_DIR, "pending_escalations.json");
 // Reset on redeploy — acceptable for a quick health snapshot, not analytics.
 const metrics = { answered: 0, escalated: 0, sendFailed: 0 };
 
+const MANAGER_PHONE = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
+
 function loadKB() {
   if (fs.existsSync(KB_FILE)) {
     return JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
@@ -313,7 +315,7 @@ function logEscalation(customerName, phoneNumber, question) {
 
 async function handleManagerReply(answer) {
   if (pendingEscalations.length === 0) {
-    await sendWhatsAppMessage(process.env.MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
+    await sendWhatsAppMessage(MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
     return;
   }
 
@@ -333,7 +335,7 @@ async function handleManagerReply(answer) {
   fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
 
   await sendWhatsAppMessage(
-    process.env.MANAGER_PHONE,
+    MANAGER_PHONE,
     `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`
   );
 
@@ -350,6 +352,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     if (conv.conversationClosed) {
       conv.messages = [];
       conv.dorContactSent = false;
+      conv.lastSeen = null;
     }
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
@@ -367,7 +370,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
     if (isNewSession) {
       await sendWhatsAppMessage(
-        process.env.MANAGER_PHONE,
+        MANAGER_PHONE,
         `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`
       );
     }
@@ -375,7 +378,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     if (conv.humanMode) {
       if (conv.messages.length > 1) {
         await sendWhatsAppMessage(
-          process.env.MANAGER_PHONE,
+          MANAGER_PHONE,
           `📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`
         );
       }
@@ -399,7 +402,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
         timestamp: new Date().toISOString(),
       });
       await sendWhatsAppMessage(
-        process.env.MANAGER_PHONE,
+        MANAGER_PHONE,
         `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`
       );
       logEscalation(customerName, phoneNumber, customerMessage);
@@ -461,8 +464,7 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`📱 ${customerName}: ${customerMessage}`);
 
-    const managerPhone = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
-    if (phoneNumber === managerPhone) {
+    if (phoneNumber === MANAGER_PHONE) {
       await handleManagerReply(customerMessage);
       return;
     }
@@ -1046,11 +1048,10 @@ app.listen(PORT, async () => {
   console.log(`Webhook: http://localhost:${PORT}/webhook`);
   websiteContent = await fetchWebsiteKB();
 
-  const managerPhone = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
   setInterval(async () => {
     const now = Date.now();
     for (const [phone, conv] of Object.entries(conversations)) {
-      if (phone === managerPhone) continue;
+      if (phone === MANAGER_PHONE) continue;
       if (conv.conversationClosed || !conv.lastSeen || conv.messages.length === 0) continue;
       const silenceMs = now - new Date(conv.lastSeen).getTime();
 
@@ -1061,7 +1062,7 @@ app.listen(PORT, async () => {
           conv.humanModeSince = null;
           saveConversations();
           await sendWhatsAppMessage(
-            process.env.MANAGER_PHONE,
+            MANAGER_PHONE,
             `🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`
           );
           console.log(`🤖 Auto-released human mode for ${phone}`);
