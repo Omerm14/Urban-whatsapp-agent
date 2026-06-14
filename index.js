@@ -277,6 +277,31 @@ async function sendWhatsAppMessage(phoneNumber, message) {
   }
 }
 
+async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "he") {
+  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
+  try {
+    await axios.post(
+      url,
+      {
+        messaging_product: "whatsapp",
+        to: phoneNumber,
+        type: "template",
+        template: { name: templateName, language: { code: languageCode } },
+      },
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
+    );
+    console.log(`📋 Template "${templateName}" sent to ${phoneNumber}`);
+  } catch (error) {
+    console.error("Failed to send template:", error.response?.data || error.message);
+  }
+}
+
+// Opens the 24h messaging window with Dor via an approved template, then sends the real text.
+async function sendManagerMessage(message) {
+  await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+  await sendWhatsAppMessage(MANAGER_PHONE, message);
+}
+
 async function sendWhatsAppContact(toPhone, contactName, contactPhone) {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   const waId = contactPhone.replace(/^\+/, "").replace(/^0/, "972");
@@ -315,7 +340,7 @@ function logEscalation(customerName, phoneNumber, question) {
 
 async function handleManagerReply(answer) {
   if (pendingEscalations.length === 0) {
-    await sendWhatsAppMessage(MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
+    await sendManagerMessage("אין שאלות ממתינות כרגע 🤷");
     return;
   }
 
@@ -334,10 +359,7 @@ async function handleManagerReply(answer) {
   });
   fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
 
-  await sendWhatsAppMessage(
-    MANAGER_PHONE,
-    `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`
-  );
+  await sendManagerMessage(`✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
 
   console.log(`📚 KB updated: "${pending.question}"`);
 }
@@ -369,18 +391,12 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     const isNewSession = !prevLastSeen ||
       (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
     if (isNewSession) {
-      await sendWhatsAppMessage(
-        MANAGER_PHONE,
-        `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`
-      );
+      await sendManagerMessage(`💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`);
     }
 
     if (conv.humanMode) {
       if (conv.messages.length > 1) {
-        await sendWhatsAppMessage(
-          MANAGER_PHONE,
-          `📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`
-        );
+        await sendManagerMessage(`📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`);
       }
       saveConversations();
       return;
@@ -401,10 +417,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
         question: customerMessage,
         timestamp: new Date().toISOString(),
       });
-      await sendWhatsAppMessage(
-        MANAGER_PHONE,
-        `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`
-      );
+      await sendManagerMessage(`❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`);
       logEscalation(customerName, phoneNumber, customerMessage);
       savePendingEscalations();
       saveConversations();
@@ -1061,10 +1074,7 @@ app.listen(PORT, async () => {
           conv.humanMode = false;
           conv.humanModeSince = null;
           saveConversations();
-          await sendWhatsAppMessage(
-            MANAGER_PHONE,
-            `🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`
-          );
+          await sendManagerMessage(`🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`);
           console.log(`🤖 Auto-released human mode for ${phone}`);
         }
         continue;
