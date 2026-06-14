@@ -277,6 +277,26 @@ async function sendWhatsAppMessage(phoneNumber, message) {
   }
 }
 
+async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "he") {
+  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
+  try {
+    await axios.post(
+      url,
+      {
+        messaging_product: "whatsapp",
+        to: phoneNumber,
+        type: "template",
+        template: { name: templateName, language: { code: languageCode } },
+      },
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
+    );
+    console.log(`📋 Template "${templateName}" sent to ${phoneNumber}`);
+  } catch (error) {
+    console.error("Failed to send template:", error.response?.data || error.message);
+  }
+}
+
+
 async function sendWhatsAppContact(toPhone, contactName, contactPhone) {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   const waId = contactPhone.replace(/^\+/, "").replace(/^0/, "972");
@@ -334,10 +354,7 @@ async function handleManagerReply(answer) {
   });
   fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
 
-  await sendWhatsAppMessage(
-    MANAGER_PHONE,
-    `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`
-  );
+  await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
 
   console.log(`📚 KB updated: "${pending.question}"`);
 }
@@ -369,18 +386,12 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     const isNewSession = !prevLastSeen ||
       (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
     if (isNewSession) {
-      await sendWhatsAppMessage(
-        MANAGER_PHONE,
-        `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`
-      );
+      await sendWhatsAppMessage(MANAGER_PHONE, `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`);
     }
 
     if (conv.humanMode) {
       if (conv.messages.length > 1) {
-        await sendWhatsAppMessage(
-          MANAGER_PHONE,
-          `📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`
-        );
+        await sendWhatsAppMessage(MANAGER_PHONE, `📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`);
       }
       saveConversations();
       return;
@@ -401,10 +412,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
         question: customerMessage,
         timestamp: new Date().toISOString(),
       });
-      await sendWhatsAppMessage(
-        MANAGER_PHONE,
-        `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`
-      );
+      await sendWhatsAppMessage(MANAGER_PHONE, `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`);
       logEscalation(customerName, phoneNumber, customerMessage);
       savePendingEscalations();
       saveConversations();
@@ -1018,6 +1026,12 @@ app.post("/send", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/morning-ping", async (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+  res.json({ ok: true, sent_to: MANAGER_PHONE });
+});
+
 // Conversations data — JSON only, used by dashboard polling
 app.get("/conversations-data", (req, res) => {
   if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -1061,10 +1075,7 @@ app.listen(PORT, async () => {
           conv.humanMode = false;
           conv.humanModeSince = null;
           saveConversations();
-          await sendWhatsAppMessage(
-            MANAGER_PHONE,
-            `🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`
-          );
+          await sendWhatsAppMessage(MANAGER_PHONE, `🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`);
           console.log(`🤖 Auto-released human mode for ${phone}`);
         }
         continue;
@@ -1088,4 +1099,26 @@ app.listen(PORT, async () => {
       }
     }
   }, 2 * 60 * 1000);
+
+  // Send the morning template to Dor daily at 07:30 Israel time (UTC+3 summer / UTC+2 winter).
+  // This opens the 24h WhatsApp messaging window so all manager alerts arrive as plain text.
+  function scheduleMorningPing() {
+    const now = new Date();
+    const israelOffset = 3 * 60; // UTC+3 (IDT); adjust to 2 in winter if needed
+    const israelNow = new Date(now.getTime() + israelOffset * 60 * 1000);
+    const nextPing = new Date(israelNow);
+    nextPing.setUTCHours(4, 30, 0, 0); // 07:30 Israel = 04:30 UTC (summer)
+    if (nextPing <= israelNow) nextPing.setUTCDate(nextPing.getUTCDate() + 1);
+    const msUntilPing = nextPing.getTime() - israelNow.getTime();
+    setTimeout(async () => {
+      await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+      console.log("🌅 Morning ping sent to manager");
+      setInterval(async () => {
+        await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+        console.log("🌅 Morning ping sent to manager");
+      }, 24 * 60 * 60 * 1000);
+    }, msUntilPing);
+    console.log(`🌅 Morning ping scheduled in ${Math.round(msUntilPing / 60000)} min`);
+  }
+  scheduleMorningPing();
 });
