@@ -1026,6 +1026,12 @@ app.post("/send", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/morning-ping", async (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+  res.json({ ok: true, sent_to: MANAGER_PHONE });
+});
+
 // Conversations data — JSON only, used by dashboard polling
 app.get("/conversations-data", (req, res) => {
   if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
