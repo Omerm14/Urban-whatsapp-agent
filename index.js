@@ -260,7 +260,7 @@ async function callClaude(conversationMessages, customerName) {
 async function sendWhatsAppMessage(phoneNumber, message) {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   try {
-    await axios.post(
+    const res = await axios.post(
       url,
       {
         messaging_product: "whatsapp",
@@ -270,7 +270,11 @@ async function sendWhatsAppMessage(phoneNumber, message) {
       },
       { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
     );
-    console.log(`✉️  Sent to ${phoneNumber}`);
+    const status = res.data?.messages?.[0]?.message_status;
+    console.log(`✉️  Sent to ${phoneNumber}${status ? ` [${status}]` : ""}`);
+    if (status && status !== "accepted") {
+      console.warn(`⚠️  Unexpected message status for ${phoneNumber}:`, JSON.stringify(res.data));
+    }
   } catch (error) {
     metrics.sendFailed++;
     console.error("Failed to send:", error.response?.data || error.message);
@@ -280,7 +284,7 @@ async function sendWhatsAppMessage(phoneNumber, message) {
 async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "he") {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   try {
-    await axios.post(
+    const res = await axios.post(
       url,
       {
         messaging_product: "whatsapp",
@@ -290,7 +294,11 @@ async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "h
       },
       { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
     );
-    console.log(`📋 Template "${templateName}" sent to ${phoneNumber}`);
+    const status = res.data?.messages?.[0]?.message_status;
+    console.log(`📋 Template "${templateName}" sent to ${phoneNumber}${status ? ` [${status}]` : ""}`);
+    if (status && status !== "accepted") {
+      console.warn(`⚠️  Unexpected template status:`, JSON.stringify(res.data));
+    }
   } catch (error) {
     console.error("Failed to send template:", error.response?.data || error.message);
   }
@@ -1032,6 +1040,22 @@ app.post("/morning-ping", async (req, res) => {
   res.json({ ok: true, sent_to: MANAGER_PHONE });
 });
 
+// Debug: send a plain-text test message to Dor and return the raw Meta response
+app.post("/ping-dor", async (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
+  try {
+    const result = await axios.post(
+      url,
+      { messaging_product: "whatsapp", to: MANAGER_PHONE, type: "text", text: { body: "🔔 בדיקה טכנית מהבוט — אם קיבלת את זה הכל תקין" } },
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
+    );
+    res.json({ ok: true, manager_phone: MANAGER_PHONE, meta_response: result.data });
+  } catch (error) {
+    res.json({ ok: false, manager_phone: MANAGER_PHONE, error: error.response?.data || error.message });
+  }
+});
+
 // Conversations data — JSON only, used by dashboard polling
 app.get("/conversations-data", (req, res) => {
   if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -1102,6 +1126,11 @@ app.listen(PORT, async () => {
 
   // Send the morning template to Dor daily at 07:30 Israel time (UTC+3 summer / UTC+2 winter).
   // This opens the 24h WhatsApp messaging window so all manager alerts arrive as plain text.
+  // Send immediately on startup to reopen the 24h window after any redeploy.
+  sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping")
+    .then(() => console.log("🌅 Startup ping sent to manager"))
+    .catch((e) => console.error("Startup ping failed:", e.message));
+
   function scheduleMorningPing() {
     const now = new Date();
     const israelOffset = 3 * 60; // UTC+3 (IDT); adjust to 2 in winter if needed
