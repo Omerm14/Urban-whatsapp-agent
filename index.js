@@ -1102,6 +1102,11 @@ app.listen(PORT, async () => {
 
   // Send the morning template to Dor daily at 07:30 Israel time (UTC+3 summer / UTC+2 winter).
   // This opens the 24h WhatsApp messaging window so all manager alerts arrive as plain text.
+  // Send immediately on startup to reopen the 24h window after any redeploy.
+  sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping")
+    .then(() => console.log("🌅 Startup ping sent to manager"))
+    .catch((e) => console.error("Startup ping failed:", e.message));
+
   function scheduleMorningPing() {
     const now = new Date();
     const israelOffset = 3 * 60; // UTC+3 (IDT); adjust to 2 in winter if needed
