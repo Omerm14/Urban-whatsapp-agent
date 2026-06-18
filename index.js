@@ -27,12 +27,23 @@ const metrics = { answered: 0, escalated: 0, sendFailed: 0 };
 const MANAGER_PHONE = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
 
 function loadKB() {
-  if (fs.existsSync(KB_FILE)) {
-    return JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
-  }
   const seed = JSON.parse(fs.readFileSync("kb.json", "utf8"));
-  fs.writeFileSync(KB_FILE, JSON.stringify(seed, null, 2));
-  return seed;
+  if (!fs.existsSync(KB_FILE)) {
+    fs.writeFileSync(KB_FILE, JSON.stringify(seed, null, 2));
+    return seed;
+  }
+  const stored = JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
+  // Merge any new seed FAQ entries that aren't in the stored KB yet
+  const storedIds = new Set(stored.faq.map(e => e.id));
+  const newEntries = seed.faq.filter(e => !storedIds.has(e.id));
+  if (newEntries.length > 0) {
+    stored.faq.push(...newEntries);
+    fs.writeFileSync(KB_FILE, JSON.stringify(stored, null, 2));
+    console.log(`📚 KB merged ${newEntries.length} new entries from seed`);
+  }
+  // Always keep business info in sync with seed
+  stored.business = seed.business;
+  return stored;
 }
 
 function loadPendingEscalations() {
@@ -48,6 +59,7 @@ function savePendingEscalations() {
 
 const KB = loadKB();
 const pendingEscalations = loadPendingEscalations();
+let managerAwaitingConfirmation = null; // set when Dor's first message triggers a question prompt
 const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 function loadConversations() {
@@ -342,29 +354,35 @@ function logEscalation(customerName, phoneNumber, question) {
 }
 
 async function handleManagerReply(answer) {
+  // Step 2: Dor already saw the question — this message IS the answer
+  if (managerAwaitingConfirmation) {
+    const pending = managerAwaitingConfirmation;
+    managerAwaitingConfirmation = null;
+
+    const idx = pendingEscalations.findIndex(e => e.customerPhone === pending.customerPhone);
+    if (idx !== -1) pendingEscalations.splice(idx, 1);
+    savePendingEscalations();
+
+    await sendWhatsAppMessage(pending.customerPhone, answer);
+    KB.faq.push({ id: `custom_${Date.now()}`, question: pending.question, answer });
+    fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
+    await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
+    console.log(`📚 KB updated: "${pending.question}"`);
+    return;
+  }
+
+  // Step 1: first message from Dor — show him the pending question, don't send anything to customer yet
   if (pendingEscalations.length === 0) {
     await sendWhatsAppMessage(MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
     return;
   }
 
-  // Route to the MOST RECENT escalation the manager was prompted about (LIFO),
-  // not a global FIFO — otherwise a reply could go to the wrong customer when
-  // several escalations are pending.
-  const pending = pendingEscalations.pop();
-  savePendingEscalations();
-
-  await sendWhatsAppMessage(pending.customerPhone, answer);
-
-  KB.faq.push({
-    id: `custom_${Date.now()}`,
-    question: pending.question,
-    answer: answer,
-  });
-  fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
-
-  await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
-
-  console.log(`📚 KB updated: "${pending.question}"`);
+  const pending = pendingEscalations[pendingEscalations.length - 1]; // peek, don't pop yet
+  managerAwaitingConfirmation = pending;
+  await sendWhatsAppMessage(
+    MANAGER_PHONE,
+    `❓ שאלה ממתינה מ-${pending.customerName}:\n"${pending.question}"\n\nשלח את תשובתך 👇`
+  );
 }
 
 async function processMessage(phoneNumber, customerMessage, customerName) {
