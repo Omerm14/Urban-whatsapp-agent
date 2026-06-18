@@ -27,12 +27,23 @@ const metrics = { answered: 0, escalated: 0, sendFailed: 0 };
 const MANAGER_PHONE = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
 
 function loadKB() {
-  if (fs.existsSync(KB_FILE)) {
-    return JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
-  }
   const seed = JSON.parse(fs.readFileSync("kb.json", "utf8"));
-  fs.writeFileSync(KB_FILE, JSON.stringify(seed, null, 2));
-  return seed;
+  if (!fs.existsSync(KB_FILE)) {
+    fs.writeFileSync(KB_FILE, JSON.stringify(seed, null, 2));
+    return seed;
+  }
+  const stored = JSON.parse(fs.readFileSync(KB_FILE, "utf8"));
+  // Merge any new seed FAQ entries that aren't in the stored KB yet
+  const storedIds = new Set(stored.faq.map(e => e.id));
+  const newEntries = seed.faq.filter(e => !storedIds.has(e.id));
+  if (newEntries.length > 0) {
+    stored.faq.push(...newEntries);
+    fs.writeFileSync(KB_FILE, JSON.stringify(stored, null, 2));
+    console.log(`📚 KB merged ${newEntries.length} new entries from seed`);
+  }
+  // Always keep business info in sync with seed
+  stored.business = seed.business;
+  return stored;
 }
 
 function loadPendingEscalations() {
