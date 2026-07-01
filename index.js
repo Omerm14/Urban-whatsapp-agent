@@ -364,6 +364,11 @@ async function handleManagerReply(answer) {
     savePendingEscalations();
 
     await sendWhatsAppMessage(pending.customerPhone, answer);
+    if (conversations[pending.customerPhone]) {
+      conversations[pending.customerPhone].messages.push({ role: 'assistant', content: answer, sender: 'dor', timestamp: new Date().toISOString() });
+      conversations[pending.customerPhone].lastSeen = new Date().toISOString();
+      saveConversations();
+    }
     KB.faq.push({ id: `custom_${Date.now()}`, question: pending.question, answer });
     fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
     await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
@@ -441,6 +446,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       await sendWhatsAppMessage(MANAGER_PHONE, `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`);
       logEscalation(customerName, phoneNumber, customerMessage);
       savePendingEscalations();
+      conv.messages.push({ role: 'assistant', content: '[הועבר לדור]', sender: 'system', timestamp: new Date().toISOString() });
       saveConversations();
       metrics.escalated++;
       console.log(`⚠️  Escalated`);
@@ -937,19 +943,19 @@ function doSend() {
     });
 }
 // Refresh countdown
-var refreshSecs = 30;
+var refreshSecs = 5;
 var refreshEl = document.getElementById('refresh-timer');
 setInterval(function(){
   refreshSecs--;
   if (refreshEl) refreshEl.textContent = refreshSecs + 's';
-  if (refreshSecs <= 0) refreshSecs = 30;
+  if (refreshSecs <= 0) refreshSecs = 5;
 }, 1000);
 // Delegated click
 document.getElementById('conv-list').addEventListener('click', function(e) {
   var item = e.target.closest('.conv-item');
   if (item && item.dataset.phone) selectConv(item.dataset.phone);
 });
-// Auto-refresh every 30 seconds
+// Auto-refresh every 5 seconds
 setInterval(function() {
   fetch('/conversations-data?token='+TOKEN)
     .then(function(r){return r.json();})
@@ -957,15 +963,15 @@ setInterval(function() {
       DATA.conversations = fresh.conversations;
       DATA.escalations = fresh.escalations;
       DATA.stats = fresh.stats;
-      refreshSecs = 30;
-      if (refreshEl) refreshEl.textContent = '30s';
+      refreshSecs = 5;
+      if (refreshEl) refreshEl.textContent = '5s';
       updateStats();
       renderList();
       var unreadCount = DATA.conversations.filter(function(c){ return isUnread(c) && c.phone !== selectedPhone; }).length;
       document.title = unreadCount > 0 ? '(' + unreadCount + ') ליה — לוח בקרה' : 'ליה — לוח בקרה';
       if (selectedPhone) { var still = getConv(selectedPhone); if (still) selectConv(selectedPhone); }
     }).catch(function(){});
-}, 30000);
+}, 5000);
 updateStats();
 renderList();
 document.addEventListener('keydown', function(e) {
@@ -1111,17 +1117,8 @@ app.listen(PORT, async () => {
       if (conv.conversationClosed || !conv.lastSeen || conv.messages.length === 0) continue;
       const silenceMs = now - new Date(conv.lastSeen).getTime();
 
-      // Auto-release human mode after 30 min of silence
-      if (conv.humanMode) {
-        if (silenceMs > 30 * 60 * 1000) {
-          conv.humanMode = false;
-          conv.humanModeSince = null;
-          saveConversations();
-          await sendWhatsAppMessage(MANAGER_PHONE, `🤖 ליה חזרה אוטומטית לשיחה עם ${conv.name || phone} (30 דק' של שקט)`);
-          console.log(`🤖 Auto-released human mode for ${phone}`);
-        }
-        continue;
-      }
+      // humanMode is permanent — only released manually by Dor
+      if (conv.humanMode) continue;
 
       if (!conv.followUpSentAt && silenceMs > FOLLOW_UP_AFTER_MS) {
         const msg = await generateFollowUpMessage(conv, "follow_up");
