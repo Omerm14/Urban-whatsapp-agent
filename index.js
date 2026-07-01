@@ -593,116 +593,118 @@ app.get("/conversations", (req, res) => {
   const css = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --wa-dark: #075e54;
+  --wa-header: #075e54;
   --wa-green: #25d366;
-  --wa-mid: #128c7e;
-  --wa-bg: #ece5dd;
+  --wa-send: #00a884;
+  --wa-bg: #e5ddd5;
   --wa-out: #dcf8c6;
   --wa-in: #ffffff;
-  --wa-sidebar: #ffffff;
   --wa-divider: #e9edef;
   --wa-text: #111b21;
   --wa-muted: #667781;
   --wa-red: #e53935;
   --wa-orange: #f57c00;
-  --shadow-sm: 0 1px 0.5px rgba(0,0,0,0.13);
+  --shadow-msg: 0 1px 0.5px rgba(11,20,26,.13);
 }
-body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; background: var(--wa-bg); height: 100dvh; display: flex; flex-direction: column; overflow: hidden; color: var(--wa-text); }
-.header { background: var(--wa-dark); color: #fff; padding: 0 14px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; height: 56px; }
-.header-title { font-size: 1.05rem; font-weight: 700; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wa-green); box-shadow: 0 0 0 0 rgba(37,211,102,.7); animation: pulse-dot 2s infinite; flex-shrink: 0; }
-@keyframes pulse-dot { 0%{box-shadow:0 0 0 0 rgba(37,211,102,.7)} 70%{box-shadow:0 0 0 6px rgba(37,211,102,0)} 100%{box-shadow:0 0 0 0 rgba(37,211,102,0)} }
-.header-stats { display: flex; gap: 5px; margin-right: auto; margin-left: auto; }
-.stat { background: rgba(255,255,255,0.1); border-radius: 8px; padding: 4px 10px; text-align: center; min-width: 52px; }
-.stat-num { font-size: 1rem; font-weight: 700; line-height: 1.2; }
-.stat-label { font-size: 0.56rem; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 1px; }
-.refresh-info { font-size: 0.65rem; opacity: 0.5; white-space: nowrap; }
-.main { display: flex; flex: 1; overflow: hidden; }
-.sidebar { width: 100%; background: var(--wa-sidebar); display: flex; flex-direction: column; flex-shrink: 0; border-left: 1px solid var(--wa-divider); }
-.search-wrap { padding: 8px 10px; background: #f0f2f5; border-bottom: 1px solid var(--wa-divider); }
-.search-wrap input { width: 100%; padding: 9px 16px; border-radius: 8px; border: none; background: #fff; font-size: 0.88rem; outline: none; color: var(--wa-text); }
-.search-wrap input::placeholder { color: var(--wa-muted); }
-.tabs { display: flex; border-bottom: 1px solid var(--wa-divider); background: #fff; }
-.tab { flex: 1; padding: 12px 4px 11px; text-align: center; font-size: 0.7rem; cursor: pointer; color: var(--wa-muted); border-bottom: 2px solid transparent; user-select: none; transition: color 0.12s; font-weight: 500; }
-.tab:hover { color: var(--wa-text); }
-.tab.active { color: var(--wa-dark); border-bottom-color: var(--wa-dark); font-weight: 700; }
-.tab-count { display: inline-block; background: #eee; color: var(--wa-muted); border-radius: 10px; padding: 0 5px; font-size: 0.6rem; font-weight: 600; }
-.tab.active .tab-count { background: rgba(7,94,84,0.12); color: var(--wa-dark); }
-.conv-list { overflow-y: auto; flex: 1; }
-.no-results { padding: 48px 16px; text-align: center; color: #ccc; font-size: 0.87rem; }
-.conv-item { padding: 10px 14px; border-bottom: 1px solid var(--wa-divider); cursor: pointer; display: flex; gap: 12px; align-items: center; background: #fff; min-height: 72px; }
-.conv-item:hover { background: #f5f6f6; }
-.conv-item.selected { background: #f0f2f5; }
-.conv-item.has-esc { border-right: 3px solid var(--wa-red); }
-.conv-item.has-human { border-right: 3px solid var(--wa-orange); }
-.ci-avatar { width: 49px; height: 49px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1rem; color: #fff; }
-.ci-body { flex: 1; min-width: 0; }
+body { font-family: -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--wa-bg); height: 100dvh; overflow: hidden; color: var(--wa-text); }
+.app { display: flex; height: 100dvh; overflow: hidden; }
+/* ── LIST SCREEN ── */
+.list-screen { display: flex; flex-direction: column; width: 100%; background: #fff; overflow: hidden; flex-shrink: 0; }
+.ls-header { background: var(--wa-header); color: #fff; height: 56px; padding: 0 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.ls-title { font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wa-green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(37,211,102,.7)} 70%{box-shadow:0 0 0 6px rgba(37,211,102,0)} 100%{box-shadow:0 0 0 0 rgba(37,211,102,0)} }
+.ls-stats { flex: 1; font-size: 0.7rem; opacity: 0.75; text-align: center; }
+.ls-refresh { font-size: 0.62rem; opacity: 0.5; white-space: nowrap; }
+.ls-search { padding: 8px 12px; background: #f0f2f5; }
+.ls-search input { width: 100%; padding: 8px 14px; border-radius: 8px; border: none; background: #fff; font-size: 0.9rem; outline: none; color: var(--wa-text); }
+.ls-search input::placeholder { color: var(--wa-muted); }
+.ls-tabs { display: flex; background: #fff; border-bottom: 1px solid var(--wa-divider); }
+.tab { flex: 1; padding: 11px 4px 10px; text-align: center; font-size: 0.7rem; color: var(--wa-muted); cursor: pointer; border-bottom: 2px solid transparent; font-weight: 500; user-select: none; }
+.tab.active { color: var(--wa-send); border-bottom-color: var(--wa-send); font-weight: 700; }
+.tab-count { display: inline-block; background: #eee; color: var(--wa-muted); border-radius: 10px; padding: 0 5px; font-size: 0.58rem; font-weight: 700; }
+.tab.active .tab-count { background: rgba(0,168,132,.12); color: var(--wa-send); }
+.ls-list { flex: 1; overflow-y: auto; }
+.no-results { padding: 48px 16px; text-align: center; color: #ccc; font-size: 0.9rem; }
+/* Conversation rows */
+.conv-item { display: flex; align-items: center; gap: 13px; padding: 10px 16px; cursor: pointer; background: #fff; position: relative; min-height: 72px; }
+.conv-item::after { content: ''; position: absolute; bottom: 0; left: 78px; right: 0; height: 1px; background: var(--wa-divider); }
+.conv-item:active, .conv-item.selected { background: #f0f2f5; }
+.conv-item.has-esc { border-left: 3px solid var(--wa-red); }
+.conv-item.has-human { border-left: 3px solid var(--wa-orange); }
+.ci-avatar { width: 49px; height: 49px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.05rem; color: #fff; }
+.ci-body { flex: 1; min-width: 0; padding-top: 2px; }
 .ci-row1 { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
-.ci-name { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wa-text); }
-.ci-time { font-size: 0.7rem; color: var(--wa-muted); flex-shrink: 0; }
-.ci-row2 { display: flex; align-items: center; gap: 6px; }
-.ci-preview { font-size: 0.82rem; color: var(--wa-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.ci-badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
-.unread-dot { width: 20px; height: 20px; border-radius: 50%; background: var(--wa-green); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 700; color: #fff; }
-.badge { font-size: 0.62rem; padding: 2px 7px; border-radius: 20px; font-weight: 500; }
+.ci-name { font-weight: 600; font-size: 0.97rem; color: var(--wa-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ci-time { font-size: 0.72rem; color: var(--wa-muted); flex-shrink: 0; margin-left: 6px; }
+.ci-time.unread { color: var(--wa-green); font-weight: 600; }
+.ci-row2 { display: flex; align-items: center; justify-content: space-between; }
+.ci-preview { font-size: 0.84rem; color: var(--wa-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ci-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-left: 8px; flex-shrink: 0; }
+.unread-badge { width: 20px; height: 20px; border-radius: 50%; background: var(--wa-green); color: #fff; font-size: 0.65rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.badge { font-size: 0.6rem; padding: 2px 6px; border-radius: 10px; font-weight: 600; }
 .b-esc { background: #ffebee; color: #c62828; }
 .b-dor { background: #e3f2fd; color: #1565c0; }
-.b-closed { background: #f3f3f3; color: #999; }
-.b-active { background: #e8f5e9; color: #2e7d32; }
-.b-fu { background: #fff3e0; color: #e65100; }
 .b-human { background: #fff3e0; color: #e65100; }
-.chat-panel { flex: 1; display: none; flex-direction: column; background: var(--wa-bg); overflow: hidden; }
-.chat-panel.mobile-open { display: flex; position: fixed; inset: 0; z-index: 20; }
-.empty-state { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: #b8afa6; }
-.empty-state .icon { font-size: 3rem; opacity: 0.4; }
-.empty-state .hint { font-size: 0.9rem; }
-.empty-state .brand-hint { font-size: 0.74rem; opacity: 0.6; }
-.chat-header { background: var(--wa-mid); color: #fff; padding: 10px 14px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; min-height: 56px; }
-.ch-back { background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; padding: 6px; line-height: 1; min-width: 36px; min-height: 44px; display: flex; align-items: center; }
-.ch-avatar { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem; color: #fff; }
-.ch-info { flex: 1; min-width: 0; }
-.ch-name { font-weight: 600; font-size: 0.97rem; }
-.ch-sub { font-size: 0.7rem; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
-.ch-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-.hbtn { border: none; padding: 8px 14px; border-radius: 20px; font-size: 0.78rem; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.15s; min-height: 36px; }
-.hbtn.hijack { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.35); }
-.hbtn.hijack:hover { background: rgba(255,255,255,0.25); }
+.b-closed { background: #f3f3f3; color: #999; }
+/* ── CHAT SCREEN ── */
+.chat-screen { flex: 1; display: none; flex-direction: column; overflow: hidden; background: var(--wa-bg); }
+.chat-screen.open { display: flex; position: fixed; inset: 0; z-index: 200; }
+.cs-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #b8b8b8; background: #f0f2f5; }
+.cs-empty .icon { font-size: 4rem; opacity: 0.35; }
+.cs-empty .hint { font-size: 0.95rem; }
+/* Chat header */
+.cs-header { background: var(--wa-header); color: #fff; height: 56px; padding: 0 8px 0 4px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.cs-back { background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; padding: 8px; line-height: 1; display: flex; align-items: center; justify-content: center; min-width: 40px; min-height: 44px; }
+.cs-avatar { width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; color: #fff; }
+.cs-info { flex: 1; min-width: 0; }
+.cs-name { font-weight: 600; font-size: 0.97rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-sub { font-size: 0.72rem; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.cs-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.hbtn { border: none; padding: 7px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; cursor: pointer; white-space: nowrap; min-height: 36px; }
+.hbtn.hijack { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.4); }
 .hbtn.release { background: #e8f5e9; color: #1b5e20; }
-.hbtn.release:hover { background: #c8e6c9; }
-.chat-messages { flex: 1; overflow-y: auto; padding: 12px 4%; display: flex; flex-direction: column; gap: 2px; }
-.human-banner { background: #fff3e0; color: #bf360c; padding: 8px 16px; font-size: 0.8rem; font-weight: 500; flex-shrink: 0; border-top: 1px solid #ffe0b2; text-align: center; }
-.compose-box { display: flex; gap: 8px; padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); background: #f0f2f5; align-items: flex-end; flex-shrink: 0; }
-.compose-box textarea { flex: 1; border-radius: 24px; border: none; padding: 10px 16px; font-size: 0.9rem; resize: none; outline: none; font-family: inherit; background: #fff; max-height: 120px; line-height: 1.5; color: var(--wa-text); }
-.compose-box textarea::placeholder { color: var(--wa-muted); }
-.compose-box button { background: var(--wa-dark); color: #fff; border: none; border-radius: 50%; width: 46px; height: 46px; font-size: 1.1rem; cursor: pointer; flex-shrink: 0; transition: background 0.15s; display: flex; align-items: center; justify-content: center; }
-.compose-box button:hover { background: var(--wa-mid); }
-.bw { display: flex; margin-bottom: 2px; padding: 0 1%; }
-.bw.u { justify-content: flex-end; }
-.bw.l { justify-content: flex-start; }
-.bw.center { justify-content: center; }
-.bubble { max-width: 76%; padding: 7px 10px 5px; border-radius: 8px; font-size: 0.9rem; line-height: 1.5; word-break: break-word; white-space: pre-wrap; box-shadow: var(--shadow-sm); }
-.bw.u .bubble { background: var(--wa-out); border-radius: 8px 0 8px 8px; }
-.bw.l .bubble { background: var(--wa-in); border-radius: 0 8px 8px 8px; }
-.dor-bubble { background: #fff8e1 !important; border: 1px solid #ffe082 !important; }
-.system-bubble { max-width: 80%; background: rgba(255,255,255,0.76) !important; color: #888; font-size: 0.74rem !important; border-radius: 8px !important; font-style: italic; text-align: center; padding: 4px 12px !important; box-shadow: none !important; }
-.dor-label { display: block; font-size: 0.62rem; color: #e65100; margin-top: 3px; font-weight: 600; }
-.msg-meta { display: flex; justify-content: flex-end; align-items: center; gap: 4px; margin-top: 3px; }
-.msg-time { font-size: 0.62rem; color: #aaa; }
-.bw.u .msg-time { color: #7fc77f; }
-.date-sep { text-align: center; margin: 14px 0 8px; }
-.date-sep span { background: rgba(255,255,255,0.82); color: #888; padding: 4px 16px; border-radius: 7px; font-size: 0.72rem; box-shadow: var(--shadow-sm); }
-.sys-note { text-align: center; margin: 8px 0; }
-.sys-note span { background: rgba(255,255,255,0.75); color: #888; font-size: 0.72rem; padding: 4px 16px; border-radius: 7px; box-shadow: var(--shadow-sm); }
-.esc-panel { flex: 1; overflow-y: auto; padding: 16px; }
-.esc-card { background: #fff; border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; border-right: 4px solid var(--wa-red); box-shadow: var(--shadow-sm); }
-.esc-meta { font-size: 0.71rem; color: var(--wa-muted); margin-bottom: 4px; }
-.esc-who { font-weight: 600; font-size: 0.87rem; margin-bottom: 7px; }
-.esc-q { background: #fff5f5; border-radius: 6px; padding: 9px 12px; font-size: 0.85rem; color: #444; border-right: 2px solid #ffcdd2; line-height: 1.5; }
-::-webkit-scrollbar { width: 3px; } ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
-@media (min-width: 701px) {
-  .sidebar { width: 360px; }
-  .chat-panel { display: flex; position: static; }
-  .ch-back { display: none; }
+/* Messages */
+.cs-messages { flex: 1; overflow-y: auto; padding: 8px 3% 4px; display: flex; flex-direction: column; gap: 2px; }
+.dor-banner { background: #fff3e0; color: #bf360c; padding: 7px 16px; font-size: 0.8rem; font-weight: 600; text-align: center; flex-shrink: 0; }
+.mw { display: flex; margin-bottom: 2px; }
+.mw.out { justify-content: flex-end; }
+.mw.in  { justify-content: flex-start; }
+.mw.sys { justify-content: center; }
+.bubble { max-width: 78%; padding: 6px 9px 20px; border-radius: 7.5px; font-size: 0.9rem; line-height: 1.5; word-break: break-word; white-space: pre-wrap; box-shadow: var(--shadow-msg); position: relative; }
+.mw.out .bubble { background: var(--wa-out); border-top-right-radius: 0; }
+.mw.out .bubble::before { content: ''; position: absolute; top: 0; right: -8px; width: 0; height: 0; border-style: solid; border-width: 8px 0 0 8px; border-color: transparent transparent transparent var(--wa-out); }
+.mw.in .bubble { background: var(--wa-in); border-top-left-radius: 0; }
+.mw.in .bubble::before { content: ''; position: absolute; top: 0; left: -8px; width: 0; height: 0; border-style: solid; border-width: 8px 8px 0 0; border-color: transparent var(--wa-in) transparent transparent; }
+.bubble.dor-b { background: #fff8e1; border: 1px solid #ffe082; }
+.mw.out .bubble.dor-b::before { border-color: transparent transparent transparent #fff8e1; }
+.bubble.sys-b { max-width: 85%; background: rgba(255,255,255,.76); font-size: 0.75rem; color: #667781; text-align: center; padding: 5px 14px; border-radius: 7px; box-shadow: none; font-style: italic; }
+.bubble.sys-b::before { display: none; }
+.dor-lbl { display: block; font-size: 0.62rem; color: #e65100; font-weight: 700; margin-bottom: 2px; }
+.msg-ts { position: absolute; bottom: 4px; right: 8px; font-size: 0.65rem; color: var(--wa-muted); white-space: nowrap; }
+.mw.out .msg-ts { color: #7fc77f; }
+.date-sep { text-align: center; margin: 10px 0 6px; }
+.date-sep span { background: rgba(255,255,255,.82); color: #667781; padding: 4px 14px; border-radius: 7px; font-size: 0.72rem; box-shadow: var(--shadow-msg); }
+.sys-ev { text-align: center; margin: 6px 0; }
+.sys-ev span { background: rgba(255,255,255,.75); color: #667781; font-size: 0.72rem; padding: 4px 14px; border-radius: 7px; box-shadow: var(--shadow-msg); }
+/* Compose */
+.cs-compose { display: flex; align-items: flex-end; gap: 8px; padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); background: #f0f2f5; flex-shrink: 0; }
+.cs-compose textarea { flex: 1; border: none; border-radius: 22px; padding: 10px 16px; font-size: 0.9rem; font-family: inherit; resize: none; outline: none; background: #fff; max-height: 130px; line-height: 1.5; color: var(--wa-text); }
+.cs-compose textarea::placeholder { color: var(--wa-muted); }
+.cs-send { width: 46px; height: 46px; border-radius: 50%; background: var(--wa-send); border: none; color: #fff; font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.cs-send:active { background: #008f72; }
+/* Escalation log */
+.esc-panel { flex: 1; overflow-y: auto; padding: 16px; background: #f0f2f5; }
+.esc-card { background: #fff; border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; border-left: 4px solid var(--wa-red); box-shadow: var(--shadow-msg); }
+.esc-meta { font-size: 0.72rem; color: var(--wa-muted); margin-bottom: 4px; }
+.esc-who { font-weight: 700; font-size: 0.9rem; margin-bottom: 7px; }
+.esc-q { background: #fff5f5; border-radius: 6px; padding: 9px 12px; font-size: 0.87rem; color: #444; border-left: 2px solid #ffcdd2; line-height: 1.5; }
+::-webkit-scrollbar { width: 3px; } ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.15); border-radius: 2px; }
+/* Desktop */
+@media (min-width: 768px) {
+  .list-screen { width: 360px; max-width: 360px; border-right: 1px solid var(--wa-divider); }
+  .chat-screen { display: flex; position: static; }
+  .cs-back { display: none; }
 }`;
 
   const token = req.query.token;
@@ -718,17 +720,13 @@ function relTime(iso) {
   var diff = Date.now() - new Date(iso).getTime();
   var m = Math.floor(diff/60000);
   if (m < 1) return 'עכשיו';
-  if (m < 60) return m + ' דק';
+  if (m < 60) return m + ' דק\'';
   var h = Math.floor(m/60);
-  if (h < 24) return h + ' שע';
+  if (h < 24) return h + ' שע\'';
   var d = Math.floor(h/24);
   if (d === 1) return 'אתמול';
   if (d < 7) return d + ' ימים';
   return new Date(iso).toLocaleDateString('he-IL');
-}
-function fullTime(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleString('he-IL', {hour:'2-digit',minute:'2-digit',day:'numeric',month:'numeric',year:'2-digit'});
 }
 function msgTime(iso) {
   if (!iso) return '';
@@ -766,8 +764,6 @@ function updateStats() {
   document.getElementById('s-total').textContent = DATA.stats.total;
   document.getElementById('s-today').textContent = DATA.stats.today;
   document.getElementById('s-esc').textContent = DATA.stats.escalations;
-  var rate = DATA.stats.total > 0 ? Math.round(DATA.stats.escalations / DATA.stats.total * 100) : 0;
-  document.getElementById('s-rate').textContent = rate + '%';
 }
 function renderTabs() {
   var counts = {all:0, active:0, human:0, escalated:0};
@@ -787,17 +783,23 @@ function setTab(el) {
   el.classList.add('active');
   currentTab = el.dataset.tab;
   selectedPhone = null;
-  document.getElementById('chat-panel').classList.remove('mobile-open');
-  document.getElementById('chat-panel').innerHTML = '<div class="empty-state"><div class="icon">🥐</div><div class="hint">בחר שיחה מהרשימה</div><div class="brand-hint">ליה · אורבן בייקרי</div></div>';
+  closeChatScreen();
   renderList();
 }
+function closeChatScreen() {
+  var cs = document.getElementById('chat-screen');
+  cs.classList.remove('open');
+  cs.innerHTML = '<div class="cs-empty"><div class="icon">🥐</div><div class="hint">בחר שיחה</div></div>';
+}
 function mobileBack() {
-  document.getElementById('chat-panel').classList.remove('mobile-open');
+  closeChatScreen();
   selectedPhone = null;
   renderList();
 }
 function getConv(phone) {
-  for (var i = 0; i < DATA.conversations.length; i++) { if (DATA.conversations[i].phone === phone) return DATA.conversations[i]; }
+  for (var i = 0; i < DATA.conversations.length; i++) {
+    if (DATA.conversations[i].phone === phone) return DATA.conversations[i];
+  }
   return null;
 }
 function renderList() {
@@ -814,28 +816,32 @@ function renderList() {
   if (items.length === 0) { container.innerHTML = '<div class="no-results">אין תוצאות</div>'; return; }
   container.innerHTML = items.map(function(c) {
     var lastMsg = c.messages.length ? c.messages[c.messages.length-1] : null;
-    var preview = lastMsg ? (lastMsg.role==='user' ? lastMsg.content : '← ' + lastMsg.content) : '';
-    if (preview.length > 55) preview = preview.slice(0, 55) + '…';
-    var badges = '';
-    if (c.humanMode) badges += '<span class="badge b-human">👤 Dor</span>';
-    if (c.escalated) badges += '<span class="badge b-esc">🔴</span>';
-    if (c.dorContactSent) badges += '<span class="badge b-dor">📇</span>';
-    if (c.conversationClosed) badges += '<span class="badge b-closed">✅</span>';
-    else if (c.followUpSentAt && !c.humanMode) badges += '<span class="badge b-fu">⏳</span>';
+    var preview = '';
+    if (lastMsg) {
+      var isFromCustomer = lastMsg.role === 'user';
+      preview = isFromCustomer ? lastMsg.content : ('✓ ' + lastMsg.content);
+    }
+    if (preview.length > 52) preview = preview.slice(0, 52) + '…';
     var displayName = (c.name && c.name !== c.phone) ? esc(c.name) : c.phone;
-    var sel = c.phone === selectedPhone ? ' selected' : '';
-    var borderCls = c.humanMode ? ' has-human' : (c.escalated ? ' has-esc' : '');
     var av = initials(c.name, c.phone);
     var avColor = avatarColor(c.phone);
-    var unreadDot = isUnread(c) && c.phone !== selectedPhone ? '<div class="unread-dot"></div>' : '';
+    var sel = c.phone === selectedPhone ? ' selected' : '';
+    var borderCls = c.humanMode ? ' has-human' : (c.escalated ? ' has-esc' : '');
+    var unread = isUnread(c) && c.phone !== selectedPhone;
+    var timeHtml = '<span class="ci-time' + (unread ? ' unread' : '') + '">' + relTime(c.lastSeen) + '</span>';
+    var badges = '';
+    if (c.humanMode) badges += '<span class="badge b-human">👤</span>';
+    else if (c.escalated) badges += '<span class="badge b-esc">🔴</span>';
+    if (c.dorContactSent) badges += '<span class="badge b-dor">📇</span>';
+    var rightCol = (unread ? '<div class="unread-badge">!</div>' : '') + badges;
     return '<div class="conv-item' + sel + borderCls + '" data-phone="' + esc(c.phone) + '">' +
       '<div class="ci-avatar" style="background:' + avColor + '">' + esc(av) + '</div>' +
       '<div class="ci-body">' +
-        '<div class="ci-row1"><span class="ci-name">' + displayName + '</span><span class="ci-time">' + relTime(c.lastSeen) + '</span></div>' +
-        '<div class="ci-preview">' + esc(preview) + '</div>' +
-        '<div class="ci-badges">' + badges + '</div>' +
-      '</div>' +
-      unreadDot + '</div>';
+        '<div class="ci-row1"><span class="ci-name" dir="auto">' + displayName + '</span>' + timeHtml + '</div>' +
+        '<div class="ci-row2"><span class="ci-preview" dir="auto">' + esc(preview) + '</span>' +
+        (rightCol ? '<div class="ci-right">' + rightCol + '</div>' : '') +
+        '</div>' +
+      '</div></div>';
   }).join('');
 }
 function selectConv(phone) {
@@ -848,14 +854,10 @@ function selectConv(phone) {
   var av = initials(conv.name, conv.phone);
   var avColor = avatarColor(conv.phone);
   var hijackBtn = conv.humanMode
-    ? '<button class="hbtn release" onclick="doRelease()">🤖 Return to Lia</button>'
-    : '<button class="hbtn hijack" onclick="doHijack()">👤 Hijack</button>';
+    ? '<button class="hbtn release" onclick="doRelease()">🤖 החזר לליה</button>'
+    : '<button class="hbtn hijack" onclick="doHijack()">👤 השתלט</button>';
   var msgsHtml = '';
   var lastDate = null;
-  var hasTs = conv.messages.some(function(m){ return !!m.timestamp; });
-  if (!hasTs && conv.lastSeen) {
-    msgsHtml += '<div class="date-sep"><span>' + formatDaySep(conv.lastSeen) + '</span></div>';
-  }
   conv.messages.forEach(function(m) {
     if (m.timestamp) {
       var d = new Date(m.timestamp);
@@ -864,40 +866,43 @@ function selectConv(phone) {
         lastDate = d;
       }
     }
-    var isUser = m.role === 'user';
+    var isCustomer = m.role === 'user';
     var isDor = m.sender === 'dor';
     var isSystem = m.sender === 'system';
-    var cls = isSystem ? 'center' : (isUser ? 'u' : 'l');
-    var bubbleCls = isSystem ? 'bubble system-bubble' : (isDor ? 'bubble dor-bubble' : 'bubble');
-    var extra = isDor ? '<span class="dor-label">Dor</span>' : '';
-    var timeStr = m.timestamp && !isSystem ? '<div class="msg-meta"><span class="msg-time">' + msgTime(m.timestamp) + '</span></div>' : '';
-    msgsHtml += '<div class="bw ' + cls + '"><div class="' + bubbleCls + '">' + esc(m.content) + extra + timeStr + '</div></div>';
+    var wrapCls = isSystem ? 'sys' : (isCustomer ? 'in' : 'out');
+    var bubCls = isSystem ? 'bubble sys-b' : (isDor ? 'bubble dor-b' : 'bubble');
+    var dorLabel = isDor ? '<span class="dor-lbl">Dor</span>' : '';
+    var ts = (m.timestamp && !isSystem) ? '<span class="msg-ts">' + msgTime(m.timestamp) + '</span>' : '';
+    msgsHtml += '<div class="mw ' + wrapCls + '"><div class="' + bubCls + '" dir="auto">' + dorLabel + esc(m.content) + ts + '</div></div>';
   });
-  if (conv.dorContactSent) msgsHtml += '<div class="sys-note"><span>📇 כרטיס ויזיטה של דור נשלח ללקוח</span></div>';
-  if (conv.conversationClosed) msgsHtml += '<div class="sys-note"><span>✅ שיחה נסגרה</span></div>';
+  if (conv.dorContactSent) msgsHtml += '<div class="sys-ev"><span>📇 כרטיס ויזיטה של דור נשלח ללקוח</span></div>';
+  if (conv.conversationClosed) msgsHtml += '<div class="sys-ev"><span>✅ שיחה נסגרה</span></div>';
   var composeHtml = conv.humanMode
-    ? '<div class="human-banner">👤 Dor mode — Lia is silent. Replies go directly to the customer.</div>' +
-      '<div class="compose-box"><textarea id="compose" placeholder="Type a message to customer..." onkeydown="composeKey(event)"></textarea>' +
-      '<button onclick="doSend()">➤</button></div>'
+    ? '<div class="dor-banner">👤 מצב Dor — ליה שותקת. הודעות הולכות ישירות ללקוח.</div>' +
+      '<div class="cs-compose"><textarea id="compose" rows="1" placeholder="כתוב הודעה..." onkeydown="composeKey(event)" oninput="autoResize(this)"></textarea>' +
+      '<button class="cs-send" onclick="doSend()">➤</button></div>'
     : '';
-  var panel = document.getElementById('chat-panel');
-  panel.innerHTML =
-    '<div class="chat-header">' +
-      '<button class="ch-back" onclick="mobileBack()">‹</button>' +
-      '<div class="ch-avatar" style="background:' + avColor + '">' + esc(av) + '</div>' +
-      '<div class="ch-info"><div class="ch-name">' + displayName + '</div>' +
-      '<div class="ch-sub">' + conv.phone + ' · ' + conv.messages.length + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
-      '<div class="ch-actions">' + hijackBtn + '</div>' +
+  var cs = document.getElementById('chat-screen');
+  cs.innerHTML =
+    '<div class="cs-header">' +
+      '<button class="cs-back" onclick="mobileBack()">&#8249;</button>' +
+      '<div class="cs-avatar" style="background:' + avColor + '">' + esc(av) + '</div>' +
+      '<div class="cs-info"><div class="cs-name" dir="auto">' + displayName + '</div>' +
+      '<div class="cs-sub">' + conv.phone + ' &middot; ' + conv.messages.length + ' הודעות</div></div>' +
+      '<div class="cs-actions">' + hijackBtn + '</div>' +
     '</div>' +
-    '<div class="chat-messages" id="msgs">' + msgsHtml + '</div>' + composeHtml;
-  panel.classList.add('mobile-open');
+    '<div class="cs-messages" id="msgs">' + msgsHtml + '</div>' + composeHtml;
+  cs.classList.add('open');
   setTimeout(function(){ var el=document.getElementById('msgs'); if(el) el.scrollTop=el.scrollHeight; }, 0);
 }
 function showEscalations() {
-  var panel = document.getElementById('chat-panel');
+  selectedPhone = null;
+  renderList();
+  var cs = document.getElementById('chat-screen');
   if (!DATA.escalations.length) {
-    panel.innerHTML = '<div class="empty-state"><div class="icon">🎉</div><div class="hint">אין escalations</div></div>';
-    panel.classList.add('mobile-open'); return;
+    cs.innerHTML = '<div class="cs-header"><button class="cs-back" onclick="mobileBack()">&#8249;</button><div class="cs-info"><div class="cs-name">Escalations</div></div></div><div class="cs-empty"><div class="icon">🎉</div><div class="hint">אין escalations</div></div>';
+    cs.classList.add('open');
+    return;
   }
   var html = DATA.escalations.map(function(e) {
     return '<div class="esc-card">' +
@@ -905,16 +910,18 @@ function showEscalations() {
       '<div class="esc-who">' + esc(e.customer) + ' <span style="color:#bbb;font-weight:400;font-size:0.78rem">(' + e.phone + ')</span></div>' +
       '<div class="esc-q">' + esc(e.question) + '</div></div>';
   }).join('');
-  panel.innerHTML =
-    '<div class="chat-header">' +
-      '<button class="ch-back" onclick="mobileBack()">‹</button>' +
-      '<div class="ch-avatar" style="background:#e53935;font-size:1.1rem">!</div>' +
-      '<div class="ch-info"><div class="ch-name">Escalations Log</div>' +
-      '<div class="ch-sub">' + DATA.escalations.length + ' שאלות</div></div></div>' +
+  cs.innerHTML =
+    '<div class="cs-header">' +
+      '<button class="cs-back" onclick="mobileBack()">&#8249;</button>' +
+      '<div class="cs-avatar" style="background:#e53935">❗</div>' +
+      '<div class="cs-info"><div class="cs-name">Escalations Log</div>' +
+      '<div class="cs-sub">' + DATA.escalations.length + ' שאלות</div></div></div>' +
     '<div class="esc-panel">' + html + '</div>';
-  panel.classList.add('mobile-open');
-  selectedPhone = null;
-  renderList();
+  cs.classList.add('open');
+}
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 130) + 'px';
 }
 function composeKey(e) {
   var isMobile = navigator.maxTouchPoints > 0;
@@ -923,14 +930,16 @@ function composeKey(e) {
 function doHijack() {
   fetch('/hijack?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:selectedPhone})})
     .then(function(r){return r.json();}).then(function(){
-      var c = getConv(selectedPhone); if(c){c.humanMode=true;c.humanModeSince=new Date().toISOString();}
+      var c = getConv(selectedPhone);
+      if(c){c.humanMode=true;c.humanModeSince=new Date().toISOString();}
       selectConv(selectedPhone); renderList();
     });
 }
 function doRelease() {
   fetch('/release?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:selectedPhone})})
     .then(function(r){return r.json();}).then(function(){
-      var c = getConv(selectedPhone); if(c){c.humanMode=false;c.humanModeSince=null;}
+      var c = getConv(selectedPhone);
+      if(c){c.humanMode=false;c.humanModeSince=null;}
       selectConv(selectedPhone); renderList();
     });
 }
@@ -938,7 +947,7 @@ function doSend() {
   var el = document.getElementById('compose');
   var msg = el ? el.value.trim() : '';
   if (!msg) return;
-  if (el) el.value = '';
+  if (el) { el.value = ''; el.style.height = 'auto'; }
   fetch('/send?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:selectedPhone,message:msg})})
     .then(function(r){return r.json();}).then(function(){
       var c = getConv(selectedPhone);
@@ -946,21 +955,18 @@ function doSend() {
       selectConv(selectedPhone);
     });
 }
-// Refresh countdown
 var REFRESH_INTERVAL = 5;
 var refreshSecs = REFRESH_INTERVAL;
 var refreshEl = document.getElementById('refresh-timer');
 setInterval(function(){
   refreshSecs--;
-  if (refreshEl) refreshEl.textContent = refreshSecs + 's';
+  if (refreshEl) refreshEl.textContent = refreshSecs;
   if (refreshSecs <= 0) refreshSecs = REFRESH_INTERVAL;
 }, 1000);
-// Delegated click
 document.getElementById('conv-list').addEventListener('click', function(e) {
   var item = e.target.closest('.conv-item');
   if (item && item.dataset.phone) selectConv(item.dataset.phone);
 });
-// Auto-refresh every 5 seconds for near real-time updates
 setInterval(function() {
   fetch('/conversations-data?token='+TOKEN)
     .then(function(r){return r.json();})
@@ -969,57 +975,52 @@ setInterval(function() {
       DATA.escalations = fresh.escalations;
       DATA.stats = fresh.stats;
       refreshSecs = REFRESH_INTERVAL;
-      if (refreshEl) refreshEl.textContent = REFRESH_INTERVAL + 's';
+      if (refreshEl) refreshEl.textContent = REFRESH_INTERVAL;
       updateStats();
       renderList();
       var unreadCount = DATA.conversations.filter(function(c){ return isUnread(c) && c.phone !== selectedPhone; }).length;
-      document.title = unreadCount > 0 ? '(' + unreadCount + ') ליה — לוח בקרה' : 'ליה — לוח בקרה';
+      document.title = unreadCount > 0 ? '(' + unreadCount + ') ליה' : 'ליה';
       if (selectedPhone) { var still = getConv(selectedPhone); if (still) selectConv(selectedPhone); }
     }).catch(function(){});
 }, 5000);
-updateStats();
-renderList();
 document.addEventListener('keydown', function(e) {
   if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
     e.preventDefault();
     var s = document.getElementById('search');
     if (s) { s.focus(); s.select(); }
   }
-});`;
+});
+updateStats();
+renderList();`;
 
   res.send(`<!DOCTYPE html>
-<html dir="rtl" lang="he">
+<html lang="he">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ליה — לוח בקרה</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ליה</title>
 <style>${css}</style>
 </head>
 <body>
-<div class="header">
-  <span class="header-title">🥐 ליה <span class="live-dot"></span></span>
-  <div class="header-stats">
-    <div class="stat"><div class="stat-num" id="s-total">—</div><div class="stat-label">שיחות</div></div>
-    <div class="stat"><div class="stat-num" id="s-today">—</div><div class="stat-label">היום</div></div>
-    <div class="stat"><div class="stat-num" id="s-esc">—</div><div class="stat-label">escalations</div></div>
-    <div class="stat"><div class="stat-num" id="s-rate">—</div><div class="stat-label">esc rate</div></div>
-  </div>
-  <span class="refresh-info">עדכון בעוד <span id="refresh-timer">30s</span></span>
-</div>
-<div class="main">
-  <div class="sidebar">
-    <div class="search-wrap"><input id="search" type="text" placeholder="חפש לפי שם או מספר..." oninput="renderList()"></div>
-    <div class="tabs">
+<div class="app">
+  <div class="list-screen" id="list-screen">
+    <div class="ls-header">
+      <div class="ls-title">🥐 ליה <span class="live-dot"></span></div>
+      <div class="ls-stats"><span id="s-total">—</span> שיחות · <span id="s-today">—</span> היום · <span id="s-esc">—</span> esc</div>
+      <div class="ls-refresh"><span id="refresh-timer">5</span>s</div>
+    </div>
+    <div class="ls-search"><input id="search" type="search" placeholder="🔍  חפש שם או מספר..." oninput="renderList()"></div>
+    <div class="ls-tabs">
       <div class="tab active" data-tab="all" onclick="setTab(this)">הכל <span class="tab-count">0</span></div>
       <div class="tab" data-tab="active" onclick="setTab(this)">פעיל <span class="tab-count">0</span></div>
       <div class="tab" data-tab="human" onclick="setTab(this)">👤 <span class="tab-count">0</span></div>
       <div class="tab" data-tab="escalated" onclick="setTab(this)">🔴 <span class="tab-count">0</span></div>
       <div class="tab" data-tab="log" onclick="setTab(this);showEscalations()">Log</div>
     </div>
-    <div class="conv-list" id="conv-list"></div>
+    <div class="ls-list" id="conv-list"></div>
   </div>
-  <div class="chat-panel" id="chat-panel">
-    <div class="empty-state"><div class="icon">🥐</div><div class="hint">בחר שיחה מהרשימה</div><div class="brand-hint">ליה · אורבן בייקרי</div></div>
+  <div class="chat-screen" id="chat-screen">
+    <div class="cs-empty"><div class="icon">🥐</div><div class="hint">בחר שיחה</div></div>
   </div>
 </div>
 <script>${js}</script>
