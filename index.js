@@ -261,13 +261,33 @@ async function callClaude(conversationMessages, customerName) {
   const langNote = latinRatio > 0.5
     ? "\nIMPORTANT: The customer's last message is in English. Respond in English only. Keep the same casual, warm WhatsApp tone — short, direct, like a real person at the bakery texting back. Not formal, not customer-service-scripted."
     : "";
-  const response = await anthropic.messages.create({
+  const params = {
     model: "claude-sonnet-4-6",
     max_tokens: 512,
     system: buildSystemPrompt() + nameNote + langNote,
     messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
-  });
-  return response.content[0].text;
+  };
+  // Retry up to 2 times on network errors (e.g. "Premature close")
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await anthropic.messages.create(params);
+      return response.content[0].text;
+    } catch (err) {
+      const isRetryable = err.message && (
+        err.message.includes('Premature close') ||
+        err.message.includes('ECONNRESET') ||
+        err.message.includes('ETIMEDOUT') ||
+        err.message.includes('socket hang up') ||
+        err.status === 529 || err.status === 503
+      );
+      if (isRetryable && attempt < 3) {
+        console.warn(`⚠️  Claude API attempt ${attempt} failed (${err.message.split('\n')[0]}), retrying in ${attempt * 2}s...`);
+        await new Promise(r => setTimeout(r, attempt * 2000));
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 async function sendWhatsAppMessage(phoneNumber, message) {
