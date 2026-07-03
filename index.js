@@ -3,6 +3,7 @@ const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const https = require("https");
 const Anthropic = require("@anthropic-ai/sdk").default;
 const { verifyMetaSignature } = require("./lib/verifySignature");
 const { isDuplicate } = require("./lib/dedup");
@@ -12,7 +13,11 @@ const app = express();
 // bytes Meta signed (JSON re-serialization would change them).
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// keepAlive prevents "Premature close" errors on Railway when connecting to Anthropic
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  httpAgent: new https.Agent({ keepAlive: true }),
+});
 
 const DATA_DIR = process.env.DATA_DIR || ".";
 const CONV_FILE = path.join(DATA_DIR, "conversations.json");
