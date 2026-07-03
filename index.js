@@ -281,9 +281,10 @@ async function callClaude(conversationMessages, customerName) {
         err.status === 529 || err.status === 503
       );
       if (isRetryable && attempt < 3) {
-        console.warn(`⚠️  Claude API attempt ${attempt} failed (${err.message.split('\n')[0]}), retrying in ${attempt * 2}s...`);
+        console.warn(`⚠️  Claude API attempt ${attempt} failed [status=${err.status || 'network'}] (${err.message.split('\n')[0]}), retrying in ${attempt * 2}s...`);
         await new Promise(r => setTimeout(r, attempt * 2000));
       } else {
+        console.error(`❌ Claude API all attempts failed [status=${err.status || 'network'}]: ${err.message.split('\n')[0]}`);
         throw err;
       }
     }
@@ -596,6 +597,21 @@ app.get("/health", (req, res) => {
     uptime_s: Math.round(process.uptime()),
     metrics,
   });
+});
+
+// Quick Claude API connectivity test — open endpoint (no token needed)
+app.get("/ping-claude", async (req, res) => {
+  const start = Date.now();
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 10,
+      messages: [{ role: "user", content: "ping" }],
+    });
+    res.json({ ok: true, reply: response.content[0].text, ms: Date.now() - start });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message, status: err.status, ms: Date.now() - start });
+  }
 });
 
 // Conversations dashboard — protected by WEBHOOK_VERIFY_TOKEN
