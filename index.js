@@ -595,25 +595,6 @@ app.get("/conversations", (req, res) => {
   today.setHours(0, 0, 0, 0);
   const activeToday = convEntries.filter(([, c]) => c.lastSeen && new Date(c.lastSeen) >= today).length;
 
-  const pageData = {
-    conversations: convEntries.map(([phone, conv]) => ({
-      phone,
-      name: conv.name || phone,
-      messages: conv.messages,
-      lastSeen: conv.lastSeen,
-      dorContactSent: !!conv.dorContactSent,
-      conversationClosed: !!conv.conversationClosed,
-      followUpSentAt: conv.followUpSentAt || null,
-      escalated: escalatedPhones.has(phone),
-      humanMode: !!conv.humanMode,
-      humanModeSince: conv.humanModeSince || null,
-    })),
-    escalations: escalations.slice().reverse().slice(0, 100),
-    stats: { total: convEntries.length, today: activeToday, escalations: escalations.length },
-  };
-
-  const jsonData = JSON.stringify(pageData).replace(/<\/script>/gi, "<\\/script>");
-
   const css = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -725,7 +706,7 @@ body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; height: 10
 
   const token = req.query.token;
   const js = `
-var DATA = ` + jsonData + `;
+var DATA = {conversations:[],escalations:[],stats:{total:0,today:0,escalations:0}};
 var TOKEN = ` + JSON.stringify(token) + `;
 var selectedPhone = null;
 var currentTab = 'all';
@@ -992,8 +973,15 @@ setInterval(function() {
       if (selectedPhone) { var still = getConv(selectedPhone); if (still) selectConv(selectedPhone); }
     }).catch(function(){});
 }, 5000);
-updateStats();
-renderList();
+fetch('/conversations-data?token='+TOKEN)
+  .then(function(r){return r.json();})
+  .then(function(fresh){
+    DATA.conversations = fresh.conversations;
+    DATA.escalations = fresh.escalations;
+    DATA.stats = fresh.stats;
+    updateStats();
+    renderList();
+  }).catch(function(){});
 document.addEventListener('keydown', function(e) {
   if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
     e.preventDefault();
