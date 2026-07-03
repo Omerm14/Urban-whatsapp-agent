@@ -512,6 +512,9 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     }
   } catch (error) {
     console.error("❌ processMessage error:", error.message);
+    try {
+      await sendWhatsAppMessage(phoneNumber, "היי! אנחנו חווים תקלה טכנית קטנה כרגע 🙏 נחזור אליך תוך כמה דקות!");
+    } catch (_) {}
   }
 }
 
