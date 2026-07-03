@@ -60,6 +60,7 @@ function savePendingEscalations() {
 const KB = loadKB();
 const pendingEscalations = loadPendingEscalations();
 let managerAwaitingConfirmation = null; // set when Dor's first message triggers a question prompt
+let managerAwaitingAnswer = null;       // set when Dor sent an answer, waiting for כן/לא confirmation
 const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 function loadConversations() {
@@ -354,25 +355,50 @@ function logEscalation(customerName, phoneNumber, question) {
 }
 
 async function handleManagerReply(answer) {
-  // Step 2: Dor already saw the question — this message IS the answer
+  const normalizedAnswer = answer.trim();
+
+  // Step 3: Dor sent כן/לא to confirm or cancel the proposed answer
+  if (managerAwaitingAnswer) {
+    const { pending, proposedAnswer } = managerAwaitingAnswer;
+    if (normalizedAnswer === 'כן' || normalizedAnswer === 'כן ✅' || normalizedAnswer.toLowerCase() === 'yes') {
+      managerAwaitingAnswer = null;
+      const idx = pendingEscalations.findIndex(e => e.customerPhone === pending.customerPhone);
+      if (idx !== -1) pendingEscalations.splice(idx, 1);
+      savePendingEscalations();
+      await sendWhatsAppMessage(pending.customerPhone, proposedAnswer);
+      if (conversations[pending.customerPhone]) {
+        conversations[pending.customerPhone].messages.push({ role: 'assistant', content: proposedAnswer, sender: 'dor', timestamp: new Date().toISOString() });
+        conversations[pending.customerPhone].lastSeen = new Date().toISOString();
+        saveConversations();
+      }
+      KB.faq.push({ id: `custom_${Date.now()}`, question: pending.question, answer: proposedAnswer });
+      fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
+      await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
+      console.log(`📚 KB updated: "${pending.question}"`);
+    } else if (normalizedAnswer === 'לא' || normalizedAnswer.toLowerCase() === 'no') {
+      managerAwaitingAnswer = null;
+      managerAwaitingConfirmation = null;
+      await sendWhatsAppMessage(MANAGER_PHONE, `❌ תשובה בוטלה. השאלה של ${pending.customerName} נשארת ממתינה.`);
+    } else {
+      // Dor sent something else — treat it as a revised answer, ask again
+      managerAwaitingAnswer = { pending, proposedAnswer: normalizedAnswer };
+      await sendWhatsAppMessage(
+        MANAGER_PHONE,
+        `💬 תשובה מוצעת ל${pending.customerName}:\n"${normalizedAnswer}"\n\nענה *כן* לשליחה או *לא* לביטול`
+      );
+    }
+    return;
+  }
+
+  // Step 2: Dor already saw the question — this message is his proposed answer
   if (managerAwaitingConfirmation) {
     const pending = managerAwaitingConfirmation;
     managerAwaitingConfirmation = null;
-
-    const idx = pendingEscalations.findIndex(e => e.customerPhone === pending.customerPhone);
-    if (idx !== -1) pendingEscalations.splice(idx, 1);
-    savePendingEscalations();
-
-    await sendWhatsAppMessage(pending.customerPhone, answer);
-    if (conversations[pending.customerPhone]) {
-      conversations[pending.customerPhone].messages.push({ role: 'assistant', content: answer, sender: 'dor', timestamp: new Date().toISOString() });
-      conversations[pending.customerPhone].lastSeen = new Date().toISOString();
-      saveConversations();
-    }
-    KB.faq.push({ id: `custom_${Date.now()}`, question: pending.question, answer });
-    fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
-    await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
-    console.log(`📚 KB updated: "${pending.question}"`);
+    managerAwaitingAnswer = { pending, proposedAnswer: normalizedAnswer };
+    await sendWhatsAppMessage(
+      MANAGER_PHONE,
+      `💬 תשובה מוצעת ל${pending.customerName}:\n"${normalizedAnswer}"\n\nענה *כן* לשליחה או *לא* לביטול`
+    );
     return;
   }
 
