@@ -3,8 +3,6 @@ const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
-const https = require("https");
-const Anthropic = require("@anthropic-ai/sdk").default;
 const { verifyMetaSignature } = require("./lib/verifySignature");
 const { isDuplicate } = require("./lib/dedup");
 
@@ -13,11 +11,11 @@ const app = express();
 // bytes Meta signed (JSON re-serialization would change them).
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
-// keepAlive prevents "Premature close" errors on Railway when connecting to Anthropic
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  httpAgent: new https.Agent({ keepAlive: true }),
-});
+const ANTHROPIC_HEADERS = {
+  "x-api-key": process.env.ANTHROPIC_API_KEY,
+  "anthropic-version": "2023-06-01",
+  "content-type": "application/json",
+};
 
 const DATA_DIR = process.env.DATA_DIR || ".";
 const CONV_FILE = path.join(DATA_DIR, "conversations.json");
@@ -272,24 +270,22 @@ async function callClaude(conversationMessages, customerName) {
     system: buildSystemPrompt() + nameNote + langNote,
     messages: conversationMessages.map((m) => ({ role: m.role, content: m.content })),
   };
-  // Retry up to 2 times on network errors (e.g. "Premature close")
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const response = await anthropic.messages.create(params);
-      return response.content[0].text;
-    } catch (err) {
-      const isRetryable = err.message && (
-        err.message.includes('Premature close') ||
-        err.message.includes('ECONNRESET') ||
-        err.message.includes('ETIMEDOUT') ||
-        err.message.includes('socket hang up') ||
-        err.status === 529 || err.status === 503
+      const res = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        params,
+        { headers: ANTHROPIC_HEADERS, timeout: 30000 }
       );
+      return res.data.content[0].text;
+    } catch (err) {
+      const status = err.response?.status;
+      const isRetryable = !status || status === 529 || status === 503;
       if (isRetryable && attempt < 3) {
-        console.warn(`⚠️  Claude API attempt ${attempt} failed [status=${err.status || 'network'}] (${err.message.split('\n')[0]}), retrying in ${attempt * 2}s...`);
+        console.warn(`⚠️  Claude API attempt ${attempt} failed [status=${status || 'network'}], retrying in ${attempt * 2}s...`);
         await new Promise(r => setTimeout(r, attempt * 2000));
       } else {
-        console.error(`❌ Claude API all attempts failed [status=${err.status || 'network'}]: ${err.message.split('\n')[0]}`);
+        console.error(`❌ Claude API failed [status=${status || 'network'}]: ${err.message}`);
         throw err;
       }
     }
@@ -608,14 +604,14 @@ app.get("/health", (req, res) => {
 app.get("/ping-claude", async (req, res) => {
   const start = Date.now();
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 10,
-      messages: [{ role: "user", content: "ping" }],
-    });
-    res.json({ ok: true, reply: response.content[0].text, ms: Date.now() - start });
+    const r = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      { model: "claude-sonnet-4-6", max_tokens: 10, messages: [{ role: "user", content: "ping" }] },
+      { headers: ANTHROPIC_HEADERS, timeout: 15000 }
+    );
+    res.json({ ok: true, reply: r.data.content[0].text, ms: Date.now() - start });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message, status: err.status, ms: Date.now() - start });
+    res.status(500).json({ ok: false, error: err.message, status: err.response?.status, ms: Date.now() - start });
   }
 });
 
