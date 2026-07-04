@@ -1001,9 +1001,9 @@ setInterval(function() {
   fetch('/conversations-data?token='+TOKEN)
     .then(function(r){return r.json();})
     .then(function(fresh){
-      DATA.conversations = fresh.conversations;
-      DATA.escalations = fresh.escalations;
-      DATA.stats = fresh.stats;
+      DATA.conversations = Array.isArray(fresh.conversations) ? fresh.conversations : DATA.conversations;
+      DATA.escalations = Array.isArray(fresh.escalations) ? fresh.escalations : DATA.escalations;
+      DATA.stats = fresh.stats || DATA.stats;
       refreshSecs = 5;
       if (refreshEl) refreshEl.textContent = '5s';
       updateStats();
@@ -1016,12 +1016,12 @@ setInterval(function() {
 fetch('/conversations-data?token='+TOKEN)
   .then(function(r){return r.json();})
   .then(function(fresh){
-    DATA.conversations = fresh.conversations;
-    DATA.escalations = fresh.escalations;
-    DATA.stats = fresh.stats;
+    DATA.conversations = Array.isArray(fresh.conversations) ? fresh.conversations : [];
+    DATA.escalations = Array.isArray(fresh.escalations) ? fresh.escalations : [];
+    DATA.stats = fresh.stats || DATA.stats;
     updateStats();
     renderList();
-  }).catch(function(){});
+  }).catch(function(err){ console.error('conversations-data fetch error:', err); });
 document.addEventListener('keydown', function(e) {
   if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
     e.preventDefault();
@@ -1135,13 +1135,13 @@ app.get("/conversations-data", (req, res) => {
     : [];
   const escalatedPhones = new Set(escalations.map(e => e.phone));
   const convEntries = Object.entries(conversations)
-    .filter(([, c]) => c.messages.length > 0)
+    .filter(([, c]) => Array.isArray(c.messages) && c.messages.length > 0)
     .sort((a, b) => new Date(b[1].lastSeen) - new Date(a[1].lastSeen));
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const activeToday = convEntries.filter(([, c]) => c.lastSeen && new Date(c.lastSeen) >= today).length;
   res.json({
     conversations: convEntries.map(([phone, conv]) => ({
-      phone, name: conv.name || phone, messages: conv.messages,
+      phone, name: conv.name || phone, messages: conv.messages || [],
       lastSeen: conv.lastSeen, dorContactSent: !!conv.dorContactSent,
       conversationClosed: !!conv.conversationClosed, followUpSentAt: conv.followUpSentAt || null,
       escalated: escalatedPhones.has(phone), humanMode: !!conv.humanMode, humanModeSince: conv.humanModeSince || null,
