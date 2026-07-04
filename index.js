@@ -111,15 +111,17 @@ async function generateFollowUpMessage(conv, type) {
   }
 
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 80,
-      system: "You are Lia, a friendly human rep at Urban Bakery Tel Aviv. Write one message only — casual, warm, zero corporate language.",
-      messages: [
-        { role: "user", content: instruction }
-      ]
-    });
-    return response.content[0].text.trim();
+    const res = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-sonnet-4-6",
+        max_tokens: 80,
+        system: "You are Lia, a friendly human rep at Urban Bakery Tel Aviv. Write one message only — casual, warm, zero corporate language.",
+        messages: [{ role: "user", content: instruction }],
+      },
+      { headers: ANTHROPIC_HEADERS, timeout: 15000 }
+    );
+    return res.data.content[0].text.trim();
   } catch {
     return type === "follow_up"
       ? (isEnglish ? "Is there anything else I can help with?" : "יש עוד שאלות?")
