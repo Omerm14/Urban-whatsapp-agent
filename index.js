@@ -807,8 +807,6 @@ function updateStats() {
   document.getElementById('s-total').textContent = DATA.stats.total;
   document.getElementById('s-today').textContent = DATA.stats.today;
   document.getElementById('s-esc').textContent = DATA.stats.escalations;
-  var rate = DATA.stats.total > 0 ? Math.round(DATA.stats.escalations / DATA.stats.total * 100) : 0;
-  document.getElementById('s-rate').textContent = rate + '%';
 }
 function renderTabs() {
   var counts = {all:0, active:0, human:0, escalated:0};
