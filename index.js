@@ -1027,14 +1027,20 @@ setInterval(function() {
     }).catch(function(){});
 }, 5000);
 fetch('/conversations-data?token='+TOKEN)
-  .then(function(r){return r.json();})
+  .then(function(r){ return r.json(); })
   .then(function(fresh){
     DATA.conversations = Array.isArray(fresh.conversations) ? fresh.conversations : [];
     DATA.escalations = Array.isArray(fresh.escalations) ? fresh.escalations : [];
     DATA.stats = fresh.stats || DATA.stats;
     updateStats();
-    renderList();
-  }).catch(function(err){ console.error('conversations-data fetch error:', err); });
+    try {
+      renderList();
+    } catch(e) {
+      document.getElementById('conv-list').innerHTML = '<div style="padding:16px;color:red;direction:ltr;font-size:12px">renderList error: ' + e.message + '</div>';
+    }
+  }).catch(function(err){
+    document.getElementById('conv-list').innerHTML = '<div style="padding:16px;color:red;direction:ltr;font-size:12px">fetch error: ' + (err&&err.message||err) + '</div>';
+  });
 document.addEventListener('keydown', function(e) {
   if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
     e.preventDefault();
