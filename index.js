@@ -651,8 +651,8 @@ app.get("/conversations", (req, res) => {
   --shadow-sm: 0 1px 1px rgba(0,0,0,0.08);
 }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; height: 100dvh; overflow: hidden; color: #111; }
-.app { display: flex; height: 100dvh; overflow: hidden; }
+body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; height: 100dvh; overflow: hidden; color: #111; direction: rtl; }
+.app { display: flex; flex-direction: row-reverse; height: 100dvh; overflow: hidden; }
 /* Sidebar */
 .sidebar { display: flex; flex-direction: column; width: 100%; background: #fff; flex-shrink: 0; }
 .sidebar-header { background: var(--wa-header); color: #fff; height: 56px; display: flex; align-items: center; padding: 0 12px 0 16px; gap: 8px; flex-shrink: 0; }
@@ -707,10 +707,10 @@ body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; height: 10
 .hbtn { border: none; padding: 6px 14px; border-radius: 20px; font-size: 0.76rem; cursor: pointer; font-weight: 600; white-space: nowrap; }
 .hbtn.hijack { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
 .hbtn.release { background: #e8f5e9; color: #2e7d32; }
-.chat-messages { flex: 1; overflow-y: auto; padding: 8px 6%; display: flex; flex-direction: column; gap: 1px; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 8px 6%; display: flex; flex-direction: column; gap: 1px; direction: ltr; }
 .human-banner { background: #fff3e0; color: #bf360c; padding: 7px 16px; font-size: 0.8rem; font-weight: 500; flex-shrink: 0; text-align: center; }
 .compose-box { display: flex; gap: 8px; padding: 8px 12px; padding-bottom: max(8px, env(safe-area-inset-bottom)); background: #f0f2f5; flex-shrink: 0; align-items: flex-end; }
-.compose-box textarea { flex: 1; border-radius: 22px; border: none; padding: 10px 16px; font-size: 0.88rem; resize: none; outline: none; font-family: inherit; background: #fff; max-height: 130px; line-height: 1.5; }
+.compose-box textarea { flex: 1; border-radius: 22px; border: none; padding: 10px 16px; font-size: 0.88rem; resize: none; outline: none; font-family: inherit; background: #fff; max-height: 130px; line-height: 1.5; direction: rtl; }
 .compose-box button { background: var(--wa-send); color: #fff; border: none; border-radius: 50%; width: 46px; height: 46px; font-size: 1rem; cursor: pointer; flex-shrink: 0; }
 /* Message bubbles */
 .bw { display: flex; margin-bottom: 2px; padding: 0 2px; }
@@ -742,7 +742,7 @@ body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; height: 10
   .ch-back { display: block; }
 }
 @media (min-width: 701px) {
-  .sidebar { width: 360px; max-width: 360px; border-left: 1px solid var(--wa-divider); }
+  .sidebar { width: 360px; max-width: 360px; border-left: none; border-right: 1px solid var(--wa-divider); }
   .chat-panel { display: flex; }
 }`;
 
