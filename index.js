@@ -854,7 +854,7 @@ function renderList() {
   var container = document.getElementById('conv-list');
   if (items.length === 0) { container.innerHTML = '<div class="no-results">אין תוצאות</div>'; return; }
   container.innerHTML = items.map(function(c) {
-    var lastMsg = c.messages.length ? c.messages[c.messages.length-1] : null;
+    var lastMsg = c.lastMessage || null;
     var preview = lastMsg ? (lastMsg.role==='user' ? lastMsg.content : '← ' + lastMsg.content) : '';
     if (preview.length > 55) preview = preview.slice(0, 55) + '…';
     var badges = '';
@@ -879,25 +879,14 @@ function renderList() {
       unreadDot + '</div>';
   }).join('');
 }
-function selectConv(phone) {
-  selectedPhone = phone;
-  markRead(phone);
-  renderList();
-  var conv = getConv(phone);
-  if (!conv) return;
-  var displayName = (conv.name && conv.name !== conv.phone) ? esc(conv.name) : conv.phone;
-  var av = initials(conv.name, conv.phone);
-  var avColor = avatarColor(conv.phone);
-  var hijackBtn = conv.humanMode
-    ? '<button class="hbtn release" onclick="doRelease()">🤖 החזר לליה</button>'
-    : '<button class="hbtn hijack" onclick="doHijack()">👤 השתלט</button>';
+function renderMessages(conv, messages) {
   var msgsHtml = '';
   var lastDate = null;
-  var hasTs = conv.messages.some(function(m){ return !!m.timestamp; });
+  var hasTs = messages.some(function(m){ return !!m.timestamp; });
   if (!hasTs && conv.lastSeen) {
     msgsHtml += '<div class="date-sep"><span>' + formatDaySep(conv.lastSeen) + '</span></div>';
   }
-  conv.messages.forEach(function(m) {
+  messages.forEach(function(m) {
     if (m.timestamp) {
       var d = new Date(m.timestamp);
       if (!lastDate || !sameDay(lastDate, d)) {
@@ -917,6 +906,20 @@ function selectConv(phone) {
   });
   if (conv.dorContactSent) msgsHtml += '<div class="sys-note"><span>📇 כרטיס ויזיטה של דור נשלח ללקוח</span></div>';
   if (conv.conversationClosed) msgsHtml += '<div class="sys-note"><span>✅ שיחה נסגרה</span></div>';
+  return msgsHtml;
+}
+function selectConv(phone) {
+  selectedPhone = phone;
+  markRead(phone);
+  renderList();
+  var conv = getConv(phone);
+  if (!conv) return;
+  var displayName = (conv.name && conv.name !== conv.phone) ? esc(conv.name) : conv.phone;
+  var av = initials(conv.name, conv.phone);
+  var avColor = avatarColor(conv.phone);
+  var hijackBtn = conv.humanMode
+    ? '<button class="hbtn release" onclick="doRelease()">🤖 החזר לליה</button>'
+    : '<button class="hbtn hijack" onclick="doHijack()">👤 השתלט</button>';
   var composeHtml = conv.humanMode
     ? '<div class="human-banner">👤 מצב Dor — ליה שותקת. הודעות הולכות ישירות ללקוח.</div>' +
       '<div class="compose-box"><textarea id="compose" placeholder="Type a message to customer..." onkeydown="composeKey(event)"></textarea>' +
@@ -928,12 +931,20 @@ function selectConv(phone) {
       '<button class="ch-back" onclick="mobileBack()">‹</button>' +
       '<div class="ch-avatar" style="background:' + avColor + '">' + esc(av) + '</div>' +
       '<div class="ch-info"><div class="ch-name">' + displayName + '</div>' +
-      '<div class="ch-sub">' + conv.phone + ' · ' + conv.messages.length + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
+      '<div class="ch-sub">' + conv.phone + ' · ' + (conv.msgCount||'?') + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
       '<div class="ch-actions">' + hijackBtn + '</div>' +
     '</div>' +
-    '<div class="chat-messages" id="msgs">' + msgsHtml + '</div>' + composeHtml;
+    '<div class="chat-messages" id="msgs"><div class="sys-note"><span>טוען...</span></div></div>' + composeHtml;
   panel.classList.add('mobile-open');
-  setTimeout(function(){ var el=document.getElementById('msgs'); if(el) el.scrollTop=el.scrollHeight; }, 0);
+  fetch('/conversation-messages?token='+TOKEN+'&phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var el = document.getElementById('msgs');
+      if (el && selectedPhone === phone) {
+        el.innerHTML = renderMessages(conv, d.messages || []);
+        el.scrollTop = el.scrollHeight;
+      }
+    }).catch(function(){});
 }
 function showEscalations() {
   var panel = document.getElementById('chat-panel');
@@ -1129,28 +1140,47 @@ app.post("/ping-dor", async (req, res) => {
   }
 });
 
-// Conversations data — JSON only, used by dashboard polling
+// Conversations list — lightweight, no messages payload
 app.get("/conversations-data", (req, res) => {
   if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
-  const escalations = fs.existsSync(ESC_FILE)
-    ? JSON.parse(fs.readFileSync(ESC_FILE, "utf8"))
-    : [];
-  const escalatedPhones = new Set(escalations.map(e => e.phone));
-  const convEntries = Object.entries(conversations)
-    .filter(([, c]) => Array.isArray(c.messages) && c.messages.length > 0)
-    .sort((a, b) => new Date(b[1].lastSeen) - new Date(a[1].lastSeen));
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const activeToday = convEntries.filter(([, c]) => c.lastSeen && new Date(c.lastSeen) >= today).length;
-  res.json({
-    conversations: convEntries.map(([phone, conv]) => ({
-      phone, name: conv.name || phone, messages: conv.messages || [],
-      lastSeen: conv.lastSeen, dorContactSent: !!conv.dorContactSent,
-      conversationClosed: !!conv.conversationClosed, followUpSentAt: conv.followUpSentAt || null,
-      escalated: escalatedPhones.has(phone), humanMode: !!conv.humanMode, humanModeSince: conv.humanModeSince || null,
-    })),
-    escalations: escalations.slice().reverse().slice(0, 100),
-    stats: { total: convEntries.length, today: activeToday, escalations: escalations.length },
-  });
+  try {
+    const escalations = fs.existsSync(ESC_FILE)
+      ? JSON.parse(fs.readFileSync(ESC_FILE, "utf8"))
+      : [];
+    const escalatedPhones = new Set(escalations.map(e => e.phone));
+    const convEntries = Object.entries(conversations)
+      .filter(([, c]) => Array.isArray(c.messages) && c.messages.length > 0)
+      .sort((a, b) => new Date(b[1].lastSeen) - new Date(a[1].lastSeen));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const activeToday = convEntries.filter(([, c]) => c.lastSeen && new Date(c.lastSeen) >= today).length;
+    const lastMsg = (conv) => {
+      const msgs = conv.messages;
+      return msgs.length ? { role: msgs[msgs.length-1].role, content: String(msgs[msgs.length-1].content || '').slice(0, 120), sender: msgs[msgs.length-1].sender } : null;
+    };
+    res.json({
+      conversations: convEntries.map(([phone, conv]) => ({
+        phone, name: conv.name || phone,
+        lastMessage: lastMsg(conv),
+        msgCount: conv.messages.length,
+        lastSeen: conv.lastSeen, dorContactSent: !!conv.dorContactSent,
+        conversationClosed: !!conv.conversationClosed, followUpSentAt: conv.followUpSentAt || null,
+        escalated: escalatedPhones.has(phone), humanMode: !!conv.humanMode, humanModeSince: conv.humanModeSince || null,
+      })),
+      escalations: escalations.slice().reverse().slice(0, 100),
+      stats: { total: convEntries.length, today: activeToday, escalations: escalations.length },
+    });
+  } catch(e) {
+    console.error('conversations-data error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Full messages for a single conversation — fetched on demand when opened
+app.get("/conversation-messages", (req, res) => {
+  if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  const conv = conversations[req.query.phone];
+  if (!conv) return res.status(404).json({ error: "Not found" });
+  res.json({ messages: conv.messages || [] });
 });
 
 const PORT = process.env.PORT || 3000;
