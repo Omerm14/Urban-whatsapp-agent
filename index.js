@@ -213,22 +213,20 @@ Lia: "yes, till 4"
 Customer: "is it busy right now?"
 Lia: "honestly no idea — depends on the day. mornings are usually calmer"
 
-Customer: "do you have oat milk?"
-Lia: "yes!"
-
 לקוח: "תודה, היה מעולה כרגיל"
 ליה: "❤️"
 
-לקוח: "יש לכם קרואסון שוקולד?"
-ליה: "לרוב כן, אבל הזמינות משתנה — כדאי לקנות מוקדם ביום"
+לקוח: "יש לכם היום קרואסון שוקולד?"
+ליה: "[ESCALATE]"
+(שאלה על זמינות בפועל של פריט ספציפי עכשיו/היום — אף פעם לא מנחשים, בודקים עם דור קודם)
 
 מידע על העסק — את יודעת את זה כמו שחבר יודע על המקום האהוב עליו. כשאת עונה, את מדברת מהבטן בסגנון שלך, לא מציטטת:
 • שעות: ראשון–חמישי 7:00–19:00 | שישי–שבת 7:00–16:00
 • כשרות: לא כשרים
 • כתובת: ניצנה 14, תל אביב יפו
 • הזמנת מקום: לא נדרשת, ישיבה על בסיס מקום פנוי
-• טבעוני: כריך אבוקדו עם טחינה, כריך כרובית עם לימון כבוש, עוגת בננות שוקולד, סלטים
-• ללא גלוטן: עוגת תפוזים, לחם ללא גלוטן, עוגיות אמרטי
+• טבעוני: כריך אבוקדו עם טחינה, כריך כרובית עם לימון כבוש, עוגת בננות שוקולד, סלטים — הזמינות משתנה
+• ללא גלוטן: עוגת תפוזים, לחם ללא גלוטן, עוגיות אמרטי — הזמינות משתנה
 • happy hour: שעה אחרונה בכל יום (מ-18:00 בחול) — 1+1 על מאפים, כריכים, סלטים, לחמים
 • עוגה מיוחדת: יש כמה סוגים של עוגת גבינה, מחירים משתנים — כדאי לבדוק בוולט או להגיע. אפשר לשריין מראש עם ברכה אישית
 • לחמים: מחמצת — שיפון אגוזים, כפרי, קמח מלא, צ׳ילי פקאן, זיתים ופרמזן, בריאות, נורווגי. הזמינות משתנה
@@ -251,7 +249,8 @@ ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 דוגמה:
 לקוח: "אנחנו צריכים קייטרינג לאירוע של 50 איש"
 ליה: "נשמע מגניב! אפשר ליצור קשר עם דור — הוא מטפל בזה ויסגור את כל הפרטים [SEND_DOR_CONTACT]"
-אם שאלה חורגת לגמרי מכל מה שמופיע למעלה ואין לה תשובה סבירה — כתבי [ESCALATE] בשורה נפרדת ותו לא. בכל מקרה אחר, עני טבעית בסגנון שלך.
+חשוב מאוד: אם לקוח שואל האם פריט ספציפי קיים/זמין אצלנו עכשיו או היום (למשל "יש לכם היום X?", "יש עכשיו X?", "האם X קיים כרגע?") — לעולם אל תעני כן/לא מתוך הרשימה למעלה, גם אם הפריט מופיע בה. תמיד כתבי [ESCALATE] בשורה נפרדת ותו לא, כדי לבדוק עם דור לפני שמבטיחים משהו ללקוח. שאלות כלליות על התפריט (למשל "מה יש לכם טבעוני") עדיין אפשר לענות מהרשימה למעלה — ההבדל הוא בין "מה יש אצלכם בדרך כלל" (אפשר לענות) לבין "האם X נמצא אצלכם עכשיו" (חובה לבדוק עם דור).
+מעבר לזה — אם שאלה חורגת מכל מה שמופיע למעלה, או שאת לא באמת בטוחה בתשובה ותצטרכי לנחש — אל תנחשי. כתבי [ESCALATE] בשורה נפרדת ותו לא. עני ישירות רק כשאת בטוחה שהמידע למעלה באמת מכסה את השאלה.
 כל הודעה ייחודית — אל תחזרי על ניסוח שכבר השתמשת בו באותה שיחה.`;
 }
 
@@ -929,8 +928,8 @@ function selectConv(phone) {
       '<button class="ch-back" onclick="mobileBack()">‹</button>' +
       '<div class="ch-avatar" style="background:' + avColor + '">' + esc(av) + '</div>' +
       '<div class="ch-info"><div class="ch-name">' + displayName + '</div>' +
-      '<div class="ch-sub">' + conv.phone + ' · ' + (conv.msgCount||'?') + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
-      '<div class="ch-actions">' + hijackBtn + '</div>' +
+      '<div class="ch-sub" id="ch-sub">' + conv.phone + ' · ' + (conv.msgCount||'?') + ' הודעות · ' + fullTime(conv.lastSeen) + '</div></div>' +
+      '<div class="ch-actions" id="ch-actions">' + hijackBtn + '</div>' +
     '</div>' +
     '<div class="chat-messages" id="msgs"><div class="sys-note"><span>טוען...</span></div></div>' + composeHtml;
   panel.classList.add('mobile-open');
@@ -941,6 +940,31 @@ function selectConv(phone) {
       if (el && selectedPhone === phone) {
         el.innerHTML = renderMessages(conv, d.messages || []);
         el.scrollTop = el.scrollHeight;
+      }
+    }).catch(function(){});
+}
+// Lightweight refresh used by the 5s poll — updates the message list and header
+// badges in place, but never touches #compose so an in-progress reply (and
+// focus) survives background polling, in and out of takeover mode.
+function refreshOpenConv(phone) {
+  var conv = getConv(phone);
+  if (!conv || selectedPhone !== phone) return;
+  var subEl = document.getElementById('ch-sub');
+  if (subEl) subEl.textContent = conv.phone + ' · ' + (conv.msgCount||'?') + ' הודעות · ' + fullTime(conv.lastSeen);
+  var actionsEl = document.getElementById('ch-actions');
+  if (actionsEl) {
+    actionsEl.innerHTML = conv.humanMode
+      ? '<button class="hbtn release" onclick="doRelease()">🤖 החזר לליה</button>'
+      : '<button class="hbtn hijack" onclick="doHijack()">👤 השתלט</button>';
+  }
+  fetch('/conversation-messages?token='+TOKEN+'&phone='+encodeURIComponent(phone))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var el = document.getElementById('msgs');
+      if (el && selectedPhone === phone) {
+        var wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        el.innerHTML = renderMessages(conv, d.messages || []);
+        if (wasAtBottom) el.scrollTop = el.scrollHeight;
       }
     }).catch(function(){});
 }
@@ -1021,7 +1045,7 @@ setInterval(function() {
       renderList();
       var unreadCount = DATA.conversations.filter(function(c){ return isUnread(c) && c.phone !== selectedPhone; }).length;
       document.title = unreadCount > 0 ? '(' + unreadCount + ') ליה — לוח בקרה' : 'ליה — לוח בקרה';
-      if (selectedPhone) { var still = getConv(selectedPhone); if (still) selectConv(selectedPhone); }
+      if (selectedPhone) { var still = getConv(selectedPhone); if (still) refreshOpenConv(selectedPhone); }
     }).catch(function(){});
 }, 5000);
 fetch('/conversations-data?token='+TOKEN)
