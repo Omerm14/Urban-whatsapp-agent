@@ -59,6 +59,12 @@ function loadPendingEscalations() {
 function savePendingEscalations() {
   fs.writeFileSync(PENDING_ESC_FILE, JSON.stringify(pendingEscalations, null, 2));
 }
+function clearPendingEscalation(phone) {
+  const idx = pendingEscalations.findIndex(e => e.customerPhone === phone);
+  if (idx === -1) return;
+  pendingEscalations.splice(idx, 1);
+  savePendingEscalations();
+}
 
 const KB = loadKB();
 const pendingEscalations = loadPendingEscalations();
@@ -1143,6 +1149,7 @@ app.post("/send", async (req, res) => {
     conversations[phone].lastSeen = new Date().toISOString();
     saveConversations();
   }
+  clearPendingEscalation(phone);
   res.json({ ok: true });
 });
 
@@ -1240,6 +1247,7 @@ app.listen(PORT, async () => {
           await sendWhatsAppMessage(phone, msg);
           conv.conversationClosed = true;
           saveConversations();
+          clearPendingEscalation(phone);
           console.log(`👋 Conversation closed for ${phone}`);
         }
       }
