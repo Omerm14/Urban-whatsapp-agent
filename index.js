@@ -452,10 +452,9 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     }
     const conv = conversations[phoneNumber];
     conv.name = customerName;
-    if (conv.conversationClosed) {
-      conv.messages = [];
+    const wasClosed = conv.conversationClosed;
+    if (wasClosed) {
       conv.dorContactSent = false;
-      conv.lastSeen = null;
     }
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
@@ -463,13 +462,11 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     const prevLastSeen = conv.lastSeen;
     conv.messages.push({ role: "user", content: customerMessage, timestamp: new Date().toISOString() });
     conv.lastSeen = new Date().toISOString();
-    if (conv.messages.length > 20) {
-      conv.messages = conv.messages.slice(-20);
-    }
 
-    // Notify Dor on any new session (first ever message, or returning after 4h gap).
+    // Notify Dor on any new session: first ever message, returning after a 4h
+    // gap, or reopening a conversation that had auto-closed.
     const SESSION_GAP_MS = 4 * 60 * 60 * 1000;
-    const isNewSession = !prevLastSeen ||
+    const isNewSession = wasClosed || !prevLastSeen ||
       (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
     if (isNewSession) {
       await sendWhatsAppMessage(MANAGER_PHONE, `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`);
@@ -483,7 +480,8 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       return;
     }
 
-    const raw = await callClaude(conv.messages, customerName);
+    // Full history is kept for the dashboard; only the recent tail goes to Claude as context.
+    const raw = await callClaude(conv.messages.slice(-20), customerName);
 
     if (raw.includes("[ESCALATE]")) {
       // De-dupe by customer so a repeated escalation doesn't queue multiple
@@ -1237,6 +1235,7 @@ app.listen(PORT, async () => {
       if (!conv.followUpSentAt && silenceMs > FOLLOW_UP_AFTER_MS) {
         const msg = await generateFollowUpMessage(conv, "follow_up");
         await sendWhatsAppMessage(phone, msg);
+        conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
         conv.followUpSentAt = new Date().toISOString();
         saveConversations();
         console.log(`🔔 Follow-up sent to ${phone}`);
@@ -1245,6 +1244,7 @@ app.listen(PORT, async () => {
         if (waitedMs > CLOSE_AFTER_MS) {
           const msg = await generateFollowUpMessage(conv, "closing");
           await sendWhatsAppMessage(phone, msg);
+          conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
           conv.conversationClosed = true;
           saveConversations();
           clearPendingEscalation(phone);
