@@ -431,13 +431,28 @@ async function handleManagerReply(answer) {
     return;
   }
 
-  // Step 1: first message from Dor — show him the pending question, don't send anything to customer yet
+  // Step 1: first message from Dor — only treat it as "show me the pending
+  // question" if he's explicitly asking for it, or if it arrives soon after
+  // the escalation alert (a direct reply to that alert). Otherwise a random
+  // message (e.g. "בוקר טוב") would get swallowed into answering a question
+  // he never meant to respond to.
+  const PENDING_TRIGGERS = ['שאלות', 'שאלה', 'pending', 'ענה'];
+  const isExplicitTrigger = PENDING_TRIGGERS.includes(normalizedAnswer.toLowerCase());
+
   if (pendingEscalations.length === 0) {
-    await sendWhatsAppMessage(MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
+    if (isExplicitTrigger) {
+      await sendWhatsAppMessage(MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
+    }
     return;
   }
 
   const pending = pendingEscalations[pendingEscalations.length - 1]; // peek, don't pop yet
+  const FRESH_ALERT_WINDOW_MS = 30 * 60 * 1000;
+  const isFreshAlert = Date.now() - new Date(pending.timestamp).getTime() < FRESH_ALERT_WINDOW_MS;
+  if (!isExplicitTrigger && !isFreshAlert) {
+    return; // not a reply to the pending question — ignore silently
+  }
+
   managerAwaitingConfirmation = pending;
   await sendWhatsAppMessage(
     MANAGER_PHONE,
