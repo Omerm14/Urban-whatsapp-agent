@@ -463,7 +463,7 @@ async function handleManagerReply(answer) {
 async function processMessage(phoneNumber, customerMessage, customerName) {
   try {
     if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
+      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, followUpAsked: false, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
     }
     const conv = conversations[phoneNumber];
     conv.name = customerName;
@@ -484,6 +484,7 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     const isNewSession = wasClosed || !prevLastSeen ||
       (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
     if (isNewSession) {
+      conv.followUpAsked = false;
       await sendWhatsAppMessage(MANAGER_PHONE, `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`);
     }
 
@@ -1247,13 +1248,23 @@ app.listen(PORT, async () => {
       // humanMode is permanent — only released manually by Dor
       if (conv.humanMode) continue;
 
-      if (!conv.followUpSentAt && silenceMs > FOLLOW_UP_AFTER_MS) {
+      if (!conv.followUpSentAt && !conv.followUpAsked && silenceMs > FOLLOW_UP_AFTER_MS) {
         const msg = await generateFollowUpMessage(conv, "follow_up");
         await sendWhatsAppMessage(phone, msg);
         conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
         conv.followUpSentAt = new Date().toISOString();
+        conv.followUpAsked = true;
         saveConversations();
         console.log(`🔔 Follow-up sent to ${phone}`);
+      } else if (!conv.followUpSentAt && conv.followUpAsked && silenceMs > FOLLOW_UP_AFTER_MS) {
+        // Already asked "anything else?" once this session — don't nag again, just close warmly.
+        const msg = await generateFollowUpMessage(conv, "closing");
+        await sendWhatsAppMessage(phone, msg);
+        conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
+        conv.conversationClosed = true;
+        saveConversations();
+        clearPendingEscalation(phone);
+        console.log(`👋 Conversation closed for ${phone} (skipped repeat follow-up)`);
       } else if (conv.followUpSentAt) {
         const waitedMs = now - new Date(conv.followUpSentAt).getTime();
         if (waitedMs > CLOSE_AFTER_MS) {
