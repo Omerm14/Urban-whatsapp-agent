@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#11753F"/>
+  <path d="M400 248a144 144 0 0 1-209 128.4L112 396l19-76.6A144 144 0 1 1 400 248z" fill="#FFFFFF"/>
+  <text x="256" y="318" text-anchor="middle" font-family="Heebo, Arial, sans-serif" font-weight="800" font-size="190" fill="#8A4B0C">ל</text>
+</svg>

@@ -5,11 +5,16 @@ const fs = require("fs");
 const path = require("path");
 const { verifyMetaSignature } = require("./lib/verifySignature");
 const { isDuplicate } = require("./lib/dedup");
+const { ContactStore } = require("./lib/contacts");
+const { PushService } = require("./lib/push");
+const { parseReply } = require("./lib/replyTags");
+const mountTeamApp = require("./lib/api");
+const { MediaService } = require("./lib/media");
 
 const app = express();
 // Capture the raw body so we can verify Meta's HMAC signature over the exact
 // bytes Meta signed (JSON re-serialization would change them).
-app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+app.use(express.json({ limit: "5mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 const ANTHROPIC_HEADERS = {
   "x-api-key": process.env.ANTHROPIC_API_KEY,
@@ -28,6 +33,8 @@ const PENDING_ESC_FILE = path.join(DATA_DIR, "pending_escalations.json");
 const metrics = { answered: 0, escalated: 0, sendFailed: 0 };
 
 const MANAGER_PHONE = (process.env.MANAGER_PHONE || "").replace(/^\+/, "");
+const APP_URL = (process.env.APP_URL || "https://urban-whatsapp-agent-production.up.railway.app").replace(/\/$/, "");
+const chatLink = (phone) => `${APP_URL}/app/#/chat/${phone}`;
 
 function loadKB() {
   const seed = JSON.parse(fs.readFileSync("kb.json", "utf8"));
@@ -44,8 +51,9 @@ function loadKB() {
     fs.writeFileSync(KB_FILE, JSON.stringify(stored, null, 2));
     console.log(`📚 KB merged ${newEntries.length} new entries from seed`);
   }
-  // Always keep business info in sync with seed
+  // Always keep business info and message templates in sync with seed
   stored.business = seed.business;
+  stored.templates = seed.templates || [];
   return stored;
 }
 
@@ -68,8 +76,9 @@ function clearPendingEscalation(phone) {
 
 const KB = loadKB();
 const pendingEscalations = loadPendingEscalations();
-let managerAwaitingConfirmation = null; // set when Dor's first message triggers a question prompt
-let managerAwaitingAnswer = null;       // set when Dor sent an answer, waiting for כן/לא confirmation
+const contacts = new ContactStore(DATA_DIR);
+const push = new PushService(DATA_DIR);
+const media = new MediaService(DATA_DIR);
 const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 function loadConversations() {
@@ -80,19 +89,65 @@ function loadConversations() {
   } catch { return {}; }
 }
 
+// Writes are coalesced: every change bumps `convRev` (the app polls with it to
+// skip unchanged responses) and the whole file is written at most once per
+// second, compact, async and atomically (tmp + rename) so a crash mid-write
+// can't corrupt it. On shutdown (Railway redeploy sends SIGTERM) we flush.
+let convRev = 1;
+let saveTimer = null;
+let saving = false;
+let dirty = false;
 function saveConversations() {
-  fs.writeFileSync(CONV_FILE, JSON.stringify(conversations, null, 2));
+  convRev++;
+  dirty = true;
+  if (!saveTimer) saveTimer = setTimeout(flushConversations, 1000);
+}
+async function flushConversations() {
+  saveTimer = null;
+  if (!dirty) return;
+  if (saving) { saveTimer = setTimeout(flushConversations, 500); return; }
+  dirty = false;
+  saving = true;
+  const tmp = CONV_FILE + ".tmp";
+  try {
+    await fs.promises.writeFile(tmp, JSON.stringify(conversations));
+    await fs.promises.rename(tmp, CONV_FILE);
+  } catch (e) {
+    console.error("❌ saving conversations failed:", e.message);
+    dirty = true;
+    if (!saveTimer) saveTimer = setTimeout(flushConversations, 5000);
+  } finally {
+    saving = false;
+  }
+}
+function flushConversationsSync() {
+  if (!dirty) return;
+  try {
+    fs.writeFileSync(CONV_FILE + ".tmp", JSON.stringify(conversations));
+    fs.renameSync(CONV_FILE + ".tmp", CONV_FILE);
+    dirty = false;
+  } catch (e) { console.error("❌ final save failed:", e.message); }
+}
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => { flushConversationsSync(); process.exit(0); });
 }
 
 const conversations = loadConversations();
-// Prune conversations not seen in 60 days
+// Prune conversations not seen in 60 days — at startup and then daily, so the
+// data stays bounded even if the server runs for months without a redeploy.
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
-for (const phone of Object.keys(conversations)) {
-  const last = conversations[phone].lastSeen;
-  if (!last || Date.now() - new Date(last).getTime() > SIXTY_DAYS_MS) {
-    delete conversations[phone];
+function pruneOldConversations() {
+  let removed = 0;
+  for (const phone of Object.keys(conversations)) {
+    const last = conversations[phone].lastSeen;
+    if (!last || Date.now() - new Date(last).getTime() > SIXTY_DAYS_MS) {
+      delete conversations[phone];
+      removed++;
+    }
   }
+  if (removed) { console.log(`🧹 Pruned ${removed} conversations idle > 60 days`); saveConversations(); }
 }
+pruneOldConversations();
 
 let websiteContent = null;
 
@@ -224,7 +279,7 @@ Lia: "honestly no idea — depends on the day. mornings are usually calmer"
 
 לקוח: "יש לכם היום קרואסון שוקולד?"
 ליה: "[ESCALATE]"
-(שאלה על זמינות בפועל של פריט ספציפי עכשיו/היום — אף פעם לא מנחשים, בודקים עם דור קודם)
+(שאלה על זמינות בפועל של פריט ספציפי עכשיו/היום — אף פעם לא מנחשים, בודקים עם הצוות קודם)
 
 מידע על העסק — את יודעת את זה כמו שחבר יודע על המקום האהוב עליו. כשאת עונה, את מדברת מהבטן בסגנון שלך, לא מציטטת:
 • שעות: ראשון–חמישי 7:00–19:00 | שישי–שבת 7:00–16:00
@@ -241,7 +296,7 @@ Lia: "honestly no idea — depends on the day. mornings are usually calmer"
 • לחם לא פרוס: אפשר — לציין בהערות בהזמנה
 • מרחב מוגן: כן, כ-50 מטר מהמקום
 • הזמנה / תפריט / משלוח: ${KB.business.wolt}
-• שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: לפנות לדור
+• שיתוף פעולה עסקי / קייטרינג / אירועים / מגשים: הצוות מטפל — אוספים פרטים ומעבירים (ראו למטה)
 • dog-friendly: כן, מוזמנים להביא כלבים
 • מאצ'ה: יש
 • פיצה: פיצה איטלקית ישר מהתנור
@@ -250,12 +305,19 @@ Lia: "honestly no idea — depends on the day. mornings are usually calmer"
 • סוגי חלב: שיבולת שועל, סויה, שקדים, אורז
 ${customEntries ? customEntries + "\n" : ""}${websiteSection}
 מחירים — לעולם אל תציגי מספרים. אם שואלים על מחיר, הפני לוולט או לשאול בחנות.
-שיתוף פעולה / קייטרינג / אירוע / הזמנה גדולה / מגשים / גיוס / עבודה / קורות חיים / שאלה על מספר של דור / בקשה לפרטי קשר של דור — זה תחום של דור. כתבי [SEND_DOR_CONTACT] בסוף ההודעה, תמיד, בכל שאלה כזו בלי יוצא מן הכלל.
-חשוב: דור לא מתחיל שיחה — הלקוח צריך ליצור איתו קשר. הזמיני את הלקוח לפנות אליו, בצורה טבעית, בלי "שלח/י".
+קייטרינג / אירוע / מגשים / הזמנה גדולה / שיתוף פעולה עסקי — הצוות שלנו מטפל בזה ישירות כאן בוואטסאפ. התפקיד שלך: לאסוף שלושה פרטים בסיסיים ולהעביר לצוות.
+הפרטים: (1) תאריך ושעה (2) מיקום — כתובת או איסוף עצמי מהמאפייה (3) כמות אורחים.
+• שאלי רק על מה שעוד חסר, בהודעה אחת קצרה וטבעית — לא שאלון. אם הלקוח כבר נתן חלק מהפרטים, אל תשאלי עליהם שוב.
+• כשיש את שלושת הפרטים (או שהלקוח לא יודע / לא רוצה לפרט) — כתבי משפט קצר שאת מעבירה לצוות ושמישהו יחזור אליו כאן בוואטסאפ, ובסוף ההודעה: [HANDOFF: <סוג הפנייה> · <תאריך ושעה> · <מיקום> · <כמות>]
+• אל תבטיחי מחיר, זמינות או אישור — את רק מעבירה.
+• לעולם אל תשלחי מספר טלפון של דור או של מישהו מהצוות, ואל תבקשי מהלקוח לפנות למספר אחר. הצוות חוזר אליו כאן.
+גיוס / עבודה / קורות חיים / ספק שמציע משהו / לקוח שמבקש לדבר עם בן אדם או עם מנהל — העבירי מיד בלי לאסוף פרטים: משפט קצר שמישהו מהצוות יחזור אליו כאן, ובסוף: [HANDOFF: <נושא בכמה מילים>]
 דוגמה:
 לקוח: "אנחנו צריכים קייטרינג לאירוע של 50 איש"
-ליה: "נשמע מגניב! אפשר ליצור קשר עם דור — הוא מטפל בזה ויסגור את כל הפרטים [SEND_DOR_CONTACT]"
-חשוב מאוד: אם לקוח שואל האם פריט ספציפי קיים/זמין אצלנו עכשיו או היום (למשל "יש לכם היום X?", "יש עכשיו X?", "האם X קיים כרגע?") — לעולם אל תעני כן/לא מתוך הרשימה למעלה, גם אם הפריט מופיע בה. תמיד כתבי [ESCALATE] בשורה נפרדת ותו לא, כדי לבדוק עם דור לפני שמבטיחים משהו ללקוח. שאלות כלליות על התפריט (למשל "מה יש לכם טבעוני") עדיין אפשר לענות מהרשימה למעלה — ההבדל הוא בין "מה יש אצלכם בדרך כלל" (אפשר לענות) לבין "האם X נמצא אצלכם עכשיו" (חובה לבדוק עם דור).
+ליה: "נשמע מעולה! לאיזה תאריך ושעה, ולאן זה צריך להגיע?"
+לקוח: "יום חמישי הבא ב-12, משרדים ברוטשילד 22"
+ליה: "מעולה, מעבירה לצוות שלנו ומישהו יחזור אלייך כאן בהקדם [HANDOFF: קייטרינג · חמישי הבא 12:00 · רוטשילד 22 · 50 איש]"
+חשוב מאוד: אם לקוח שואל האם פריט ספציפי קיים/זמין אצלנו עכשיו או היום (למשל "יש לכם היום X?", "יש עכשיו X?", "האם X קיים כרגע?") — לעולם אל תעני כן/לא מתוך הרשימה למעלה, גם אם הפריט מופיע בה. תמיד כתבי [ESCALATE] בשורה נפרדת ותו לא, כדי לבדוק עם הצוות לפני שמבטיחים משהו ללקוח. שאלות כלליות על התפריט (למשל "מה יש לכם טבעוני") עדיין אפשר לענות מהרשימה למעלה — ההבדל הוא בין "מה יש אצלכם בדרך כלל" (אפשר לענות) לבין "האם X נמצא אצלכם עכשיו" (חובה לבדוק עם הצוות).
 מעבר לזה — אם שאלה חורגת מכל מה שמופיע למעלה, או שאת לא באמת בטוחה בתשובה ותצטרכי לנחש — אל תנחשי. כתבי [ESCALATE] בשורה נפרדת ותו לא. עני ישירות רק כשאת בטוחה שהמידע למעלה באמת מכסה את השאלה.
 כל הודעה ייחודית — אל תחזרי על ניסוח שכבר השתמשת בו באותה שיחה.`;
 }
@@ -299,6 +361,8 @@ async function callClaude(conversationMessages, customerName) {
   }
 }
 
+// Both senders return { ok, wamid, error } so callers can store the WhatsApp
+// message id and later match delivery/read receipts (webhook `statuses`).
 async function sendWhatsAppMessage(phoneNumber, message) {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   try {
@@ -312,62 +376,81 @@ async function sendWhatsAppMessage(phoneNumber, message) {
       },
       { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
     );
-    const status = res.data?.messages?.[0]?.message_status;
+    const sent = res.data?.messages?.[0];
+    const status = sent?.message_status;
     console.log(`✉️  Sent to ${phoneNumber}${status ? ` [${status}]` : ""}`);
     if (status && status !== "accepted") {
       console.warn(`⚠️  Unexpected message status for ${phoneNumber}:`, JSON.stringify(res.data));
     }
+    return { ok: true, wamid: sent?.id || null };
   } catch (error) {
     metrics.sendFailed++;
-    console.error("Failed to send:", error.response?.data || error.message);
+    const detail = error.response?.data || error.message;
+    console.error("Failed to send:", detail);
+    return { ok: false, wamid: null, error: error.response?.data?.error?.message || error.message };
   }
 }
 
-async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "he") {
+// `params` fills the template body variables ({{1}}, {{2}}, ...) in order.
+async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "he", params = []) {
   const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
+  const template = { name: templateName, language: { code: languageCode } };
+  if (params.length) {
+    template.components = [{ type: "body", parameters: params.map(t => ({ type: "text", text: String(t) })) }];
+  }
   try {
     const res = await axios.post(
       url,
-      {
-        messaging_product: "whatsapp",
-        to: phoneNumber,
-        type: "template",
-        template: { name: templateName, language: { code: languageCode } },
-      },
+      { messaging_product: "whatsapp", to: phoneNumber, type: "template", template },
       { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
     );
-    const status = res.data?.messages?.[0]?.message_status;
+    const sent = res.data?.messages?.[0];
+    const status = sent?.message_status;
     console.log(`📋 Template "${templateName}" sent to ${phoneNumber}${status ? ` [${status}]` : ""}`);
     if (status && status !== "accepted") {
       console.warn(`⚠️  Unexpected template status:`, JSON.stringify(res.data));
     }
+    return { ok: true, wamid: sent?.id || null };
   } catch (error) {
+    metrics.sendFailed++;
     console.error("Failed to send template:", error.response?.data || error.message);
+    return { ok: false, wamid: null, error: error.response?.data?.error?.message || error.message };
   }
 }
 
-
-async function sendWhatsAppContact(toPhone, contactName, contactPhone) {
-  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
-  const waId = contactPhone.replace(/^\+/, "").replace(/^0/, "972");
-  try {
-    await axios.post(
-      url,
-      {
-        messaging_product: "whatsapp",
-        to: toPhone,
-        type: "contacts",
-        contacts: [{
-          name: { formatted_name: contactName, first_name: contactName },
-          phones: [{ phone: contactPhone, type: "CELL", wa_id: waId }],
-        }],
-      },
-      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}` } }
-    );
-    console.log(`📇 Contact sent to ${toPhone}`);
-  } catch (error) {
-    console.error("Failed to send contact:", error.response?.data || error.message);
+// Alerts to Dor's private WhatsApp (backup) and a push to his phone.
+// whatsapp=false → push only (used for replies in team-held chats).
+async function notifyDor({ text, title, body, phone, tag, whatsapp = true }) {
+  const url = phone ? chatLink(phone) : `${APP_URL}/app/`;
+  if (whatsapp && MANAGER_PHONE) {
+    await sendWhatsAppMessage(MANAGER_PHONE, `${text}\n${url}`);
   }
+  push.notifyOwner({ title, body, url: phone ? `/app/#/chat/${phone}` : "/app/", tag: tag || phone })
+    .catch(e => console.error("push error:", e.message));
+}
+
+function ensureConversation(phone, name) {
+  if (!conversations[phone]) {
+    conversations[phone] = {
+      messages: [], lastSeen: null, followUpSentAt: null, followUpAsked: false,
+      conversationClosed: false, name: name || phone, humanMode: false, humanModeSince: null,
+      humanBy: null, waitingForTeam: false, unread: 0,
+    };
+  }
+  return conversations[phone];
+}
+
+// Records a message Lia/the team sent, with its wamid for read receipts.
+function pushOutgoing(conv, { content, sender, senderName, result, template, media }) {
+  const msg = {
+    role: "assistant", content, sender, timestamp: new Date().toISOString(),
+    wamid: result?.wamid || null, status: result?.ok === false ? "failed" : "sent",
+  };
+  if (senderName) msg.senderName = senderName;
+  if (template) msg.template = template;
+  if (media) Object.assign(msg, media); // { media, mediaId, mimeType, filename }
+  conv.messages.push(msg);
+  return msg;
 }
 
 function logEscalation(customerName, phoneNumber, question) {
@@ -383,100 +466,58 @@ function logEscalation(customerName, phoneNumber, question) {
   fs.writeFileSync(ESC_FILE, JSON.stringify(escalations, null, 2));
 }
 
-async function handleManagerReply(answer) {
-  const normalizedAnswer = answer.trim();
+// Answers to customers now happen only in the team app. If Dor writes to
+// Lia's number from his private WhatsApp, point him there (at most once a day).
+let lastManagerRedirectAt = 0;
+async function handleManagerMessage() {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  if (Date.now() - lastManagerRedirectAt < DAY_MS) return;
+  lastManagerRedirectAt = Date.now();
+  await sendWhatsAppMessage(MANAGER_PHONE, `היי דור 👋 עונים ללקוחות עכשיו מהאפליקציה:\n${APP_URL}/app/`);
+}
 
-  // Step 3: Dor sent כן/לא to confirm or cancel the proposed answer
-  if (managerAwaitingAnswer) {
-    const { pending, proposedAnswer } = managerAwaitingAnswer;
-    if (normalizedAnswer === 'כן' || normalizedAnswer === 'כן ✅' || normalizedAnswer.toLowerCase() === 'yes') {
-      managerAwaitingAnswer = null;
-      const idx = pendingEscalations.findIndex(e => e.customerPhone === pending.customerPhone);
-      if (idx !== -1) pendingEscalations.splice(idx, 1);
-      savePendingEscalations();
-      await sendWhatsAppMessage(pending.customerPhone, proposedAnswer);
-      if (conversations[pending.customerPhone]) {
-        conversations[pending.customerPhone].messages.push({ role: 'assistant', content: proposedAnswer, sender: 'dor', timestamp: new Date().toISOString() });
-        conversations[pending.customerPhone].lastSeen = new Date().toISOString();
-        saveConversations();
-      }
-      KB.faq.push({ id: `custom_${Date.now()}`, question: pending.question, answer: proposedAnswer });
-      fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2));
-      await sendWhatsAppMessage(MANAGER_PHONE, `✅ תשובה נשלחה ל${pending.customerName} ונוספה לבסיס הידע!`);
-      console.log(`📚 KB updated: "${pending.question}"`);
-    } else if (normalizedAnswer === 'לא' || normalizedAnswer.toLowerCase() === 'no') {
-      managerAwaitingAnswer = null;
-      managerAwaitingConfirmation = null;
-      await sendWhatsAppMessage(MANAGER_PHONE, `❌ תשובה בוטלה. השאלה של ${pending.customerName} נשארת ממתינה.`);
-    } else {
-      // Dor sent something else — treat it as a revised answer, ask again
-      managerAwaitingAnswer = { pending, proposedAnswer: normalizedAnswer };
-      await sendWhatsAppMessage(
-        MANAGER_PHONE,
-        `💬 תשובה מוצעת ל${pending.customerName}:\n"${normalizedAnswer}"\n\nענה *כן* לשליחה או *לא* לביטול`
-      );
-    }
-    return;
+// Non-text messages (image, voice, file, location...) Lia can't read. Record
+// them so the team sees them, and flag the chat as waiting for the team.
+const MEDIA_LABELS = {
+  image: "📷 תמונה", audio: "🎤 הקלטה", voice: "🎤 הקלטה", video: "🎥 סרטון",
+  document: "📄 קובץ", sticker: "סטיקר", location: "📍 מיקום", contacts: "👤 איש קשר",
+};
+async function recordNonTextMessage(phoneNumber, customerName, message) {
+  const conv = ensureConversation(phoneNumber, customerName);
+  const part = message[message.type] || {};
+  const caption = part.caption;
+  const label = (MEDIA_LABELS[message.type] || "הודעה") + (caption ? `: ${caption}` : "");
+  const msg = { role: "user", sender: "user", content: label, media: message.type, timestamp: new Date().toISOString() };
+  if (part.id) { msg.mediaId = part.id; msg.mimeType = part.mime_type || null; msg.filename = part.filename || null; }
+  if (caption) msg.caption = caption;
+  if (message.type === "location") {
+    msg.location = { lat: part.latitude, lng: part.longitude, name: part.name || null };
   }
-
-  // Step 2: Dor already saw the question — this message is his proposed answer
-  if (managerAwaitingConfirmation) {
-    const pending = managerAwaitingConfirmation;
-    managerAwaitingConfirmation = null;
-    managerAwaitingAnswer = { pending, proposedAnswer: normalizedAnswer };
-    await sendWhatsAppMessage(
-      MANAGER_PHONE,
-      `💬 תשובה מוצעת ל${pending.customerName}:\n"${normalizedAnswer}"\n\nענה *כן* לשליחה או *לא* לביטול`
-    );
-    return;
-  }
-
-  // Step 1: first message from Dor — only treat it as "show me the pending
-  // question" if he's explicitly asking for it, or if it arrives soon after
-  // the escalation alert (a direct reply to that alert). Otherwise a random
-  // message (e.g. "בוקר טוב") would get swallowed into answering a question
-  // he never meant to respond to.
-  const PENDING_TRIGGERS = ['שאלות', 'שאלה', 'pending', 'ענה'];
-  const isExplicitTrigger = PENDING_TRIGGERS.includes(normalizedAnswer.toLowerCase());
-
-  if (pendingEscalations.length === 0) {
-    if (isExplicitTrigger) {
-      await sendWhatsAppMessage(MANAGER_PHONE, "אין שאלות ממתינות כרגע 🤷");
-    }
-    return;
-  }
-
-  const pending = pendingEscalations[pendingEscalations.length - 1]; // peek, don't pop yet
-  const FRESH_ALERT_WINDOW_MS = 30 * 60 * 1000;
-  const isFreshAlert = Date.now() - new Date(pending.timestamp).getTime() < FRESH_ALERT_WINDOW_MS;
-  if (!isExplicitTrigger && !isFreshAlert) {
-    return; // not a reply to the pending question — ignore silently
-  }
-
-  managerAwaitingConfirmation = pending;
-  await sendWhatsAppMessage(
-    MANAGER_PHONE,
-    `❓ שאלה ממתינה מ-${pending.customerName}:\n"${pending.question}"\n\nשלח את תשובתך 👇`
-  );
+  conv.messages.push(msg);
+  conv.lastSeen = new Date().toISOString();
+  conv.unread = (conv.unread || 0) + 1;
+  conv.conversationClosed = false;
+  conv.waitingForTeam = true;
+  contacts.autoSaveFromWhatsApp(phoneNumber, customerName);
+  saveConversations();
+  push.notifyOwner({ title: conv.name || phoneNumber, body: label, url: `/app/#/chat/${phoneNumber}`, tag: phoneNumber })
+    .catch(e => console.error("push error:", e.message));
 }
 
 async function processMessage(phoneNumber, customerMessage, customerName) {
   try {
-    if (!conversations[phoneNumber]) {
-      conversations[phoneNumber] = { messages: [], dorContactSent: false, lastSeen: null, followUpSentAt: null, followUpAsked: false, conversationClosed: false, name: customerName, humanMode: false, humanModeSince: null };
-    }
-    const conv = conversations[phoneNumber];
+    const conv = ensureConversation(phoneNumber, customerName);
     conv.name = customerName;
     const wasClosed = conv.conversationClosed;
-    if (wasClosed) {
-      conv.dorContactSent = false;
-    }
     conv.followUpSentAt = null;
     conv.conversationClosed = false;
     // Capture lastSeen before updating it — used below to detect a new session.
     const prevLastSeen = conv.lastSeen;
-    conv.messages.push({ role: "user", content: customerMessage, timestamp: new Date().toISOString() });
+    conv.messages.push({ role: "user", sender: "user", content: customerMessage, timestamp: new Date().toISOString() });
     conv.lastSeen = new Date().toISOString();
+    conv.unread = (conv.unread || 0) + 1;
+    contacts.autoSaveFromWhatsApp(phoneNumber, customerName);
+    const displayName = contacts.get(phoneNumber)?.name || customerName;
 
     // Notify Dor on any new session: first ever message, returning after a 4h
     // gap, or reopening a conversation that had auto-closed.
@@ -485,21 +526,28 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
       (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
     if (isNewSession) {
       conv.followUpAsked = false;
-      await sendWhatsAppMessage(MANAGER_PHONE, `💬 שיחה חדשה\n${customerName} · ${phoneNumber}\n"${customerMessage}"`);
+      await notifyDor({
+        text: `💬 שיחה חדשה\n${displayName} · ${phoneNumber}\n"${customerMessage}"`,
+        title: `💬 שיחה חדשה · ${displayName}`, body: customerMessage, phone: phoneNumber,
+      });
     }
 
+    // The team holds this chat — Lia stays silent. Push only (no WhatsApp).
     if (conv.humanMode) {
-      if (conv.messages.length > 1) {
-        await sendWhatsAppMessage(MANAGER_PHONE, `📨 ${conv.name || phoneNumber} ענה:\n"${customerMessage}"`);
-      }
       saveConversations();
+      if (!isNewSession) {
+        await notifyDor({ title: displayName, body: customerMessage, phone: phoneNumber, whatsapp: false });
+      }
       return;
     }
 
     // Full history is kept for the dashboard; only the recent tail goes to Claude as context.
-    const raw = await callClaude(conv.messages.slice(-20), customerName);
+    // System notes ("[הועבר לצוות]") are for the dashboard only — keep them out of Claude's context.
+    const context = conv.messages.filter(m => m.sender !== "system").slice(-20);
+    const raw = await callClaude(context, customerName);
+    const reply = parseReply(raw);
 
-    if (raw.includes("[ESCALATE]")) {
+    if (reply.escalate) {
       // De-dupe by customer so a repeated escalation doesn't queue multiple
       // pending entries for the same person.
       const existingIdx = pendingEscalations.findIndex(
@@ -512,33 +560,73 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
         question: customerMessage,
         timestamp: new Date().toISOString(),
       });
-      await sendWhatsAppMessage(MANAGER_PHONE, `❓ שאלה לא מוכרת\nמ: ${customerName}\nטלפון: ${phoneNumber}\nשאלה: ${customerMessage}\n\nענה כאן ואוסיף לבסיס הידע 📝`);
-      logEscalation(customerName, phoneNumber, customerMessage);
       savePendingEscalations();
-      conv.messages.push({ role: 'assistant', content: '[הועבר לדור]', sender: 'system', timestamp: new Date().toISOString() });
+      logEscalation(customerName, phoneNumber, customerMessage);
+      conv.waitingForTeam = true;
+      conv.messages.push({ role: 'assistant', content: '[הועבר לצוות]', sender: 'system', timestamp: new Date().toISOString() });
       saveConversations();
+      await notifyDor({
+        text: `❓ ליה לא יודעת לענות\n${displayName} · ${phoneNumber}\n"${customerMessage}"`,
+        title: `❓ ליה מחכה לכם · ${displayName}`, body: customerMessage, phone: phoneNumber,
+      });
       metrics.escalated++;
       console.log(`⚠️  Escalated`);
-    } else {
-      const sendDorContact = raw.includes("[SEND_DOR_CONTACT]");
-      const answer = raw.replace(/\[SEND_DOR_CONTACT\]/g, "").trim();
-      await sendWhatsAppMessage(phoneNumber, answer);
-      if (sendDorContact) {
-        await sendWhatsAppContact(phoneNumber, KB.business.manager_name, KB.business.manager_whatsapp);
-        conv.dorContactSent = true;
-        console.log(`📇 Dor contact sent`);
-      }
-      conv.messages.push({ role: "assistant", content: answer, timestamp: new Date().toISOString() });
-      saveConversations();
-      metrics.answered++;
-      console.log(`✅ Answered`);
+      return;
     }
+
+    if (reply.text) {
+      const result = await sendWhatsAppMessage(phoneNumber, reply.text);
+      pushOutgoing(conv, { content: reply.text, sender: "lia", result });
+    }
+
+    if (reply.handoff) {
+      // Hand the chat to the team: Lia goes silent until someone gives it back.
+      conv.humanMode = true;
+      conv.humanModeSince = new Date().toISOString();
+      conv.humanBy = null;
+      conv.waitingForTeam = true;
+      conv.handoffSummary = reply.handoff.summary || null;
+      conv.messages.push({ role: 'assistant', content: '[הועבר לצוות]', sender: 'system', timestamp: new Date().toISOString() });
+      saveConversations();
+      const summary = reply.handoff.summary ? `\n${reply.handoff.summary}` : "";
+      await notifyDor({
+        text: `🙋 הועבר לצוות\n${displayName} · ${phoneNumber}${summary}`,
+        title: `🙋 הועבר לצוות · ${displayName}`, body: reply.handoff.summary || customerMessage, phone: phoneNumber,
+      });
+      metrics.escalated++;
+      console.log(`🙋 Handed off to team`);
+      return;
+    }
+
+    saveConversations();
+    metrics.answered++;
+    console.log(`✅ Answered`);
   } catch (error) {
     console.error("❌ processMessage error:", error.message);
     try {
       await sendWhatsAppMessage(phoneNumber, "היי! אנחנו חווים תקלה טכנית קטנה כרגע 🙏 נחזור אליך תוך כמה דקות!");
     } catch (_) {}
   }
+}
+
+const STATUS_RANK = { sent: 1, delivered: 2, read: 3 };
+function applyStatuses(statuses) {
+  let changed = false;
+  for (const st of statuses) {
+    const conv = conversations[st.recipient_id];
+    if (!conv || !st.id) continue;
+    const msg = conv.messages.find(m => m.wamid === st.id);
+    if (!msg) continue;
+    if (st.status === "failed") {
+      msg.status = "failed";
+      msg.error = st.errors?.[0]?.title || st.errors?.[0]?.message || "failed";
+      changed = true;
+    } else if ((STATUS_RANK[st.status] || 0) > (STATUS_RANK[msg.status] || 0)) {
+      msg.status = st.status;
+      changed = true;
+    }
+  }
+  if (changed) saveConversations();
 }
 
 // Receive messages from WhatsApp
@@ -559,10 +647,13 @@ app.post("/webhook", async (req, res) => {
   res.status(200).send("OK");
   try {
     const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+    // Delivery / read receipts for messages we sent → ✓ / ✓✓ / blue ✓✓ in the app.
+    if (Array.isArray(value?.statuses)) applyStatuses(value.statuses);
+
     const message = value?.messages?.[0];
     const contact = value?.contacts?.[0];
 
-    if (!message || !contact || message.type !== "text") return;
+    if (!message || !contact) return;
 
     // Drop duplicate deliveries (Meta retries) before any processing.
     if (isDuplicate(message.id)) {
@@ -571,15 +662,21 @@ app.post("/webhook", async (req, res) => {
     }
 
     const phoneNumber = message.from;
-    const customerMessage = message.text.body;
     const customerName = contact.profile?.name || phoneNumber;
 
-    console.log(`📱 ${customerName}: ${customerMessage}`);
-
     if (phoneNumber === MANAGER_PHONE) {
-      await handleManagerReply(customerMessage);
+      await handleManagerMessage();
       return;
     }
+
+    if (message.type !== "text") {
+      console.log(`📎 ${customerName}: [${message.type}]`);
+      await recordNonTextMessage(phoneNumber, customerName, message);
+      return;
+    }
+
+    const customerMessage = message.text.body;
+    console.log(`📱 ${customerName}: ${customerMessage}`);
 
     if (!messageQueues[phoneNumber]) messageQueues[phoneNumber] = { messages: [], timer: null };
     const queue = messageQueues[phoneNumber];
@@ -912,7 +1009,7 @@ function renderMessages(conv, messages) {
       }
     }
     var isUser = m.role === 'user';
-    var isDor = m.sender === 'dor';
+    var isDor = m.sender === 'dor' || m.sender === 'team';
     var isSystem = m.sender === 'system';
     if (isSystem) { msgsHtml += '<div class="sys-note"><span>' + esc(m.content) + '</span></div>'; return; }
     var cls = isUser ? 'l' : 'u';
@@ -1157,10 +1254,14 @@ app.post("/send", async (req, res) => {
   if (req.query.token !== process.env.WEBHOOK_VERIFY_TOKEN) return res.status(403).json({ error: "Forbidden" });
   const { phone, message } = req.body;
   if (!phone || !message) return res.status(400).json({ error: "Missing phone or message" });
-  await sendWhatsAppMessage(phone, message);
+  const result = await sendWhatsAppMessage(phone, message);
   if (conversations[phone]) {
-    conversations[phone].messages.push({ role: "assistant", content: message, sender: "dor", timestamp: new Date().toISOString() });
-    conversations[phone].lastSeen = new Date().toISOString();
+    const conv = conversations[phone];
+    pushOutgoing(conv, { content: message, sender: "team", senderName: "דור", result });
+    conv.humanMode = true;
+    conv.humanModeSince = conv.humanModeSince || new Date().toISOString();
+    conv.waitingForTeam = false;
+    conv.lastSeen = new Date().toISOString();
     saveConversations();
   }
   clearPendingEscalation(phone);
@@ -1232,11 +1333,25 @@ app.get("/conversation-messages", (req, res) => {
   res.json({ messages: conv.messages || [] });
 });
 
+// Team app (/app) + its JSON API (/api)
+mountTeamApp(app, {
+  conversations, saveConversations, ensureConversation, pushOutgoing,
+  contacts, push, media, KB,
+  getRev: () => convRev,
+  saveKB: () => fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2)),
+  pendingEscalations, clearPendingEscalation,
+  sendWhatsAppMessage, sendWhatsAppTemplate,
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
   console.log(`Webhook: http://localhost:${PORT}/webhook`);
   websiteContent = await fetchWebsiteKB();
+
+  // Daily housekeeping: drop idle conversations and old cached media files.
+  setInterval(() => { pruneOldConversations(); media.prune(); }, 24 * 60 * 60 * 1000);
+  media.prune();
 
   setInterval(async () => {
     const now = Date.now();
@@ -1250,8 +1365,7 @@ app.listen(PORT, async () => {
 
       if (!conv.followUpSentAt && !conv.followUpAsked && silenceMs > FOLLOW_UP_AFTER_MS) {
         const msg = await generateFollowUpMessage(conv, "follow_up");
-        await sendWhatsAppMessage(phone, msg);
-        conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
+        pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
         conv.followUpSentAt = new Date().toISOString();
         conv.followUpAsked = true;
         saveConversations();
@@ -1259,8 +1373,7 @@ app.listen(PORT, async () => {
       } else if (!conv.followUpSentAt && conv.followUpAsked && silenceMs > FOLLOW_UP_AFTER_MS) {
         // Already asked "anything else?" once this session — don't nag again, just close warmly.
         const msg = await generateFollowUpMessage(conv, "closing");
-        await sendWhatsAppMessage(phone, msg);
-        conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
+        pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
         conv.conversationClosed = true;
         saveConversations();
         clearPendingEscalation(phone);
@@ -1269,8 +1382,7 @@ app.listen(PORT, async () => {
         const waitedMs = now - new Date(conv.followUpSentAt).getTime();
         if (waitedMs > CLOSE_AFTER_MS) {
           const msg = await generateFollowUpMessage(conv, "closing");
-          await sendWhatsAppMessage(phone, msg);
-          conv.messages.push({ role: "assistant", content: msg, sender: "lia", timestamp: new Date().toISOString() });
+          pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
           conv.conversationClosed = true;
           saveConversations();
           clearPendingEscalation(phone);
