@@ -68,8 +68,8 @@ a { color: var(--accent); }
 svg { display: block; flex-shrink: 0; }
 
 /* ── Layout: one pane on phones, list + chat side by side on wide screens ── */
-#app { height: 100dvh; display: flex; }
-.pane { height: 100dvh; display: flex; flex-direction: column; min-width: 0; position: relative; background: var(--surface); }
+#app { height: 100vh; height: 100dvh; display: flex; }
+.pane { height: 100vh; height: 100dvh; display: flex; flex-direction: column; min-width: 0; position: relative; background: var(--surface); }
 #side { flex: 1 1 auto; }
 #main { flex: 1 1 auto; display: none; }
 body.route-main #side { display: none; }
@@ -217,7 +217,7 @@ body.route-main #main { display: flex; }
 .form .f { display: flex; flex-direction: column; gap: 4px; }
 .form label, .form .lbl { font-size: 13px; color: var(--muted); font-weight: 500; }
 .form input[type=text], .form input[type=tel], .form textarea, .form select { height: 46px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 0 4px; font-size: 17px; outline: none; border-radius: 0; }
-.form textarea { height: auto; min-height: 64px; padding: 8px 4px; resize: vertical; font-size: 15px; }
+.form textarea { height: auto; min-height: 64px; padding: 8px 4px; resize: vertical; font-size: 16px; }
 .form input:focus, .form textarea:focus, .form select:focus { border-bottom: 2px solid var(--accent); }
 .info { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--chip); color: var(--muted); font-size: 13px; line-height: 1.45; }
 .tpl-opt { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -312,3 +312,5 @@ mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
 .diag-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
 .diag-dot.ok { background: #1E9E57; }
 .diag-dot.bad { background: #D93025; }
+
+.sheet-back.busy { cursor: progress; }
