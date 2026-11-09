@@ -50,6 +50,7 @@ Team app (/app, PWA) ⇄ /api (lib/api.js) → Meta API (sent from Lia's number)
 | `lib/auth.js` | Signed session cookie (member id) + middleware |
 | `lib/contacts.js` | Phone book (`contacts.json`), vCard/CSV import, phone normalization |
 | `lib/push.js` | Web Push to Dor's phone (`push.json`, VAPID) |
+| `lib/templates.js` | Approved message templates, read live from Meta |
 | `lib/replyTags.js` | Parses `[HANDOFF]` / `[ESCALATE]` |
 | `lib/media.js` | Send photos/videos/voice/files (upload to Meta), serve inbound/outbound media via `/api/media/:id` with a cache in `DATA_DIR/media` |
 | `public/app/` | The team app: WhatsApp-style chats, contacts, import, new chat with template |
@@ -80,6 +81,7 @@ Set in Railway → Variables (never commit to git):
 | `META_APP_SECRET` | Meta App secret (App → Settings → Basic). Verifies webhook `X-Hub-Signature-256`. If unset, verification is skipped (logged) so the webhook keeps working |
 | `DATA_DIR` | `/data` — Railway volume mount. Persists `conversations.json`, `escalations.json`, `pending_escalations.json`, `kb.json`, `contacts.json`, `team.json`, `push.json` and `media/` across redeploys. Defaults to `.` locally |
 | `APP_URL` | Public base URL used in links sent to Dor (default: the Railway URL) |
+| `WHATSAPP_BUSINESS_ACCOUNT_ID` | Optional — WABA id for reading templates. If unset it's discovered from the access token |
 | `APP_SECRET` | Optional — signs team-app session cookies (falls back to `WEBHOOK_VERIFY_TOKEN`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys. Generate once: `npx web-push generate-vapid-keys`. If unset, push is disabled |
 | `PUSH_OWNER` | Optional — name of the team member who gets push notifications (default: the team admin) |
@@ -112,7 +114,7 @@ Set in Railway → Variables (never commit to git):
 - [ ] **Token expiry**: Meta dev tokens expire every ~24h. Upgrade to a permanent **System User token** via Meta Business Manager for production
 - [ ] **Meta app review**: Currently in development mode (only test recipients can receive messages). Submit app for Meta review to go live
 - [ ] **Conversation history**: Stored in-memory — resets on redeploy. Consider Redis (e.g. Upstash) for persistence
-- [ ] **Message templates**: submit `urban_open_chat`, `urban_order_ready`, `urban_follow_up` (he, Utility, one `{{1}}` = first name) in Meta. Until approved, the team can only write to customers who messaged in the last 24h
+- [ ] **Message templates**: create them in WhatsApp Manager → Message templates. The app lists only templates Meta has **approved** (read live, cached 5 min; `urban_morning_ping` is hidden). Body variables become fields; the first one is pre-filled with the customer's first name. Templates with a media header or dynamic URL button aren't offered. WhatsApp rule: free-form messages only within 24h of the customer's **last** message — older customers need a template even if you talked before
 - [ ] **Google Contacts import** — not built yet (needs a Google OAuth app)
 - [ ] **escalations.json**: Local file, lost on redeploy. Consider external storage if escalation history is needed
 
