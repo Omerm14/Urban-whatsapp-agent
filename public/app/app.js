@@ -177,7 +177,7 @@
   const PIN_ERR = { wrong_pin: "קוד שגוי", locked: "יותר מדי ניסיונות — נסו שוב בעוד רבע שעה", too_many_attempts: "יותר מדי ניסיונות — נסו שוב בעוד רבע שעה" };
   const pinInput = (id, label, auto) => `
     <label class="sr-only" for="${id}">${label}</label>
-    <input id="${id}" class="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="${auto || "current-password"}" placeholder="••••••" required>`;
+    <input id="${id}" class="pin" dir="ltr" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="${auto || "current-password"}" placeholder="••••••" required>`;
   function loginShell(title, sub, inner) {
     document.body.classList.add("route-main");
     side.innerHTML = "";
@@ -239,7 +239,7 @@
         <div id="otp-step" hidden>
           <p class="hint" id="otp-sent"></p>
           <label class="lbl" for="otp">קוד מהוואטסאפ</label>
-          <input id="otp" class="pin" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••">
+          <input id="otp" class="pin" dir="ltr" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••">
           ${first ? `<label class="lbl" for="owner-name">השם שלך</label><input id="owner-name" class="name-input" type="text" value="דור" maxlength="40">` : ""}
           <label class="lbl" for="new-pin">בחרו קוד כניסה (6 ספרות)</label>
           ${pinInput("new-pin", "קוד כניסה חדש", "new-password")}
@@ -255,7 +255,7 @@
       try {
         const r = await api("/team/owner-code", { body: {} });
         $("#otp-step").hidden = false;
-        $("#otp-sent").textContent = `שלחנו קוד לוואטסאפ ${r.sentTo}`;
+        $("#otp-sent").innerHTML = `שלחנו קוד לוואטסאפ <bdi dir="ltr">${esc(r.sentTo)}</bdi>`;
         sendBtn.textContent = "שליחה חוזרת";
         $("#otp").focus();
         setTimeout(() => { sendBtn.disabled = false; }, 60000);
@@ -276,7 +276,14 @@
         LS.set("lia_member", me.id);
         renderInstall(me.name);
       } catch (ex) {
-        err.textContent = ex.message === "bad_pin" ? "הקוד צריך להיות 6 ספרות" : ex.message === "wrong_code" ? "קוד האימות שגוי או שפג תוקפו" : "משהו השתבש, נסו שוב";
+        const left = ex.data && ex.data.left;
+        err.textContent = {
+          bad_pin: "קוד הכניסה שבחרתם צריך להיות 6 ספרות",
+          wrong_code: `קוד האימות לא תואם להודעה בוואטסאפ${left ? ` (נשארו ${left} ניסיונות)` : ""}`,
+          too_many: "יותר מדי ניסיונות — לחצו \"שליחה חוזרת\" לקוד חדש",
+          expired: "עברו 10 דקות והקוד פג — לחצו \"שליחה חוזרת\"",
+          no_code: "לחצו \"שליחה חוזרת\" לקבלת קוד",
+        }[ex.message] || "משהו השתבש, נסו שוב";
       }
     });
   }

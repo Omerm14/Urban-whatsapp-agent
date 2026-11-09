@@ -292,3 +292,10 @@ mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
 .avatar .who.lia { background: var(--surface); padding: 0; overflow: hidden; }
 .avatar .who.lia .lia-face { width: 100%; height: 100%; }
 .lia-bar .ico { background: none; overflow: hidden; }
+
+/* Setup / join forms: every label sits above its field. */
+.login form, #otp-step { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 300px; }
+#otp-step[hidden] { display: none; }
+.login .lbl { display: block; width: 100%; }
+.login input { width: 100%; box-sizing: border-box; }
+.login .hint { margin: 0; }
