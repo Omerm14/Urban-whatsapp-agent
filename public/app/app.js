@@ -1024,7 +1024,9 @@
           ? `<div class="info">באייפון: שיתוף ← "הוסף למסך הבית", פתחו את ליה מהמסך הבית, ואז הפעילו כאן התראות.</div>`
           : `<div class="info">הדפדפן הזה לא תומך בהתראות.</div>`;
       } else {
-        pushHtml = `<button class="btn big" data-push>${p.subscribed ? "התראות פעילות · שליחת בדיקה" : "הפעלת התראות בטלפון"}</button>`;
+        pushHtml = p.subscribed
+          ? `<button class="btn big" data-push-test>התראות פעילות · שליחת בדיקה</button><button class="btn ghost big" data-push>רישום הטלפון מחדש להתראות</button>`
+          : `<button class="btn big" data-push>הפעלת התראות בטלפון</button>`;
       }
     }
     openSheet(me.name, `
@@ -1039,11 +1041,11 @@
       </div>`, (root, close) => {
       const pb = root.querySelector("[data-push]");
       if (pb) pb.addEventListener("click", async () => {
-        try {
-          if (p.subscribed) { await api("/push/test", { method: "POST", body: {} }); toast("נשלחה התראת בדיקה"); }
-          else { await enablePush(); toast("ההתראות הופעלו"); close(); }
-        } catch (ex) { toast(ex.message === "denied" ? "ההרשאה להתראות נחסמה בהגדרות הטלפון" : "לא הצלחנו להפעיל התראות"); }
+        try { await enablePush(true); toast("הטלפון נרשם להתראות — שולח בדיקה…"); await pushTest(); close(); }
+        catch (ex) { toast(ex.message === "denied" ? "ההרשאה להתראות נחסמה — הגדרות ← ליה ← הודעות" : "לא הצלחנו להפעיל התראות"); }
       });
+      const pt = root.querySelector("[data-push-test]");
+      if (pt) pt.addEventListener("click", () => pushTest());
       const db = root.querySelector("[data-diag]");
       if (db) db.addEventListener("click", () => { close(); openDiagnostics(); });
       const tb = root.querySelector("[data-team]");
@@ -1119,7 +1121,10 @@
         ${row(d.phone && d.phone.ok, "מספר", d.phone && d.phone.ok ? `${esc(d.phone.number || "")} · ${esc(d.phone.name || "")}` : "", d.phone && d.phone.detail)}
         ${row(d.waba && d.waba.ok, "חשבון WhatsApp Business", d.waba && d.waba.ok ? `${esc(d.waba.id)}${d.waba.fromEnv ? " (מ-Railway)" : " (זוהה אוטומטית)"}` : "הוסיפו ב-Railway את WHATSAPP_BUSINESS_ACCOUNT_ID", d.waba && d.waba.detail)}
         ${tp ? row(tp.ok, "תבניות", tp.ok ? `${tp.approved} מאושרות${tp.others && tp.others.length ? ` · ${tp.others.length} אחרות (${esc(tp.others.map((o) => o.name + ": " + o.status).join(", "))})` : ""}` : "", tp.detail) : ""}
-        ${row(d.push && d.push.ok, "התראות Push", d.push && d.push.ok ? (d.push.subscribed ? "מוגדר, והטלפון של המנהל רשום" : "מוגדר — הפעילו התראות מה-⋮") : "חסרים מפתחות VAPID ב-Railway")}
+        ${row(d.push && d.push.ok && d.push.devices > 0, "התראות Push", !(d.push && d.push.ok) ? "חסרים מפתחות VAPID ב-Railway"
+          : d.push.devices === 0 ? "אף טלפון לא רשום — באייפון: פותחים את ליה מהאייקון במסך הבית ← ⋮ ← הפעלת התראות"
+          : `${d.push.devices} מכשירים רשומים${d.push.last ? ` · אחרונה: ${esc(new Date(d.push.last.at).toLocaleString("he-IL"))} — ${d.push.last.sent ? "נשלחה" : "לא נשלחה"}` : ""}`,
+          d.push && d.push.last && d.push.last.errors && d.push.last.errors.length ? d.push.last.errors.join(" | ") : "")}
       </div>`);
   }
 
@@ -1145,13 +1150,38 @@
     const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
     return Uint8Array.from(raw, (c) => c.charCodeAt(0));
   }
-  async function enablePush() {
+  async function enablePush(fresh) {
     const perm = await Notification.requestPermission();
     if (perm !== "granted") throw new Error("denied");
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(state.me.push.publicKey) });
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && fresh) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(state.me.push.publicKey) });
     await api("/push/subscribe", { body: { subscription: sub.toJSON() } });
     state.me.push.subscribed = true;
+  }
+  async function pushTest() {
+    try {
+      const r = await api("/push/test", { method: "POST", body: {} });
+      if (r.sent > 0) toast("נשלחה התראת בדיקה — אמורה לקפוץ עכשיו");
+      else if (!r.devices) toast("הטלפון לא רשום להתראות — לחצו 'רישום הטלפון מחדש'");
+      else toast("Apple דחתה את ההתראה: " + (r.errors || []).join(" | "));
+    } catch { toast("הבדיקה נכשלה"); }
+  }
+  // Keep the push registration alive: if notifications are allowed on this
+  // device, make sure the server has its current subscription (silently).
+  async function ensurePush() {
+    const p = state.me && state.me.push;
+    if (!p || !p.enabled || !state.me.isPushOwner) return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(p.publicKey) });
+      await api("/push/subscribe", { body: { subscription: sub.toJSON() } });
+      p.subscribed = true;
+    } catch { /* stays as is; the menu offers re-registering */ }
   }
 
   // ── Contacts ───────────────────────────────────────────────────────────────
@@ -1424,6 +1454,7 @@
     side.innerHTML = "";
     await loadConvs(true);
     route();
+    ensurePush();
   }
 
   setInterval(() => {
