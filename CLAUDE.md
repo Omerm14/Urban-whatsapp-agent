@@ -50,6 +50,7 @@ Team app (/app, PWA) ⇄ /api (lib/api.js) → Meta API (sent from Lia's number)
 | `lib/contacts.js` | Phone book (`contacts.json`), vCard/CSV import, phone normalization |
 | `lib/push.js` | Web Push to Dor's phone (`push.json`, VAPID) |
 | `lib/replyTags.js` | Parses `[HANDOFF]` / `[ESCALATE]` |
+| `lib/media.js` | Send photos/videos/voice/files (upload to Meta), serve inbound/outbound media via `/api/media/:id` with a cache in `DATA_DIR/media` |
 | `public/app/` | The team app: WhatsApp-style chats, contacts, import, new chat with template |
 
 ---
@@ -112,7 +113,6 @@ Set in Railway → Variables (never commit to git):
 - [ ] **Meta app review**: Currently in development mode (only test recipients can receive messages). Submit app for Meta review to go live
 - [ ] **Conversation history**: Stored in-memory — resets on redeploy. Consider Redis (e.g. Upstash) for persistence
 - [ ] **Message templates**: submit `urban_open_chat`, `urban_order_ready`, `urban_follow_up` (he, Utility, one `{{1}}` = first name) in Meta. Until approved, the team can only write to customers who messaged in the last 24h
-- [ ] **Attachments from the app** (photos/files) — not built yet; inbound media is shown as a label only
 - [ ] **Google Contacts import** — not built yet (needs a Google OAuth app)
 - [ ] **escalations.json**: Local file, lost on redeploy. Consider external storage if escalation history is needed
 
@@ -130,6 +130,22 @@ npm test               # unit tests (node --test)
 Set `NODE_ENV=development` locally so the session cookie works over plain http.
 
 ---
+
+## Load & storage (measured)
+
+Benchmarked locally with 3,000 conversations (≈ 60 days × 50 chats/day; idle chats are pruned after 60 days, at startup and daily):
+
+| | |
+|---|---|
+| `conversations.json` | ~18 MB, written compact, at most once per second, atomically (tmp + rename), flushed on SIGTERM |
+| Memory (RSS) | ~140 MB |
+| App poll when nothing changed (`?rev=`) | ~26 bytes, < 1 ms |
+| Full chat list | top 150 chats + anything unread / waiting for the team (~80 KB); older chats via server-side search |
+| Open chat | last 200 messages ("הצגת הודעות קודמות" loads the rest) |
+| Media cache | files older than 30 days removed, capped at 1 GB |
+| Upload limit from the app | 30 MB per file (held in memory while relayed to Meta) |
+
+If volume grows a lot beyond this, the next step is moving conversations from one JSON file to SQLite on the volume.
 
 ## Knowledge Base
 

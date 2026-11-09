@@ -9,6 +9,7 @@ const { ContactStore } = require("./lib/contacts");
 const { PushService } = require("./lib/push");
 const { parseReply } = require("./lib/replyTags");
 const mountTeamApp = require("./lib/api");
+const { MediaService } = require("./lib/media");
 
 const app = express();
 // Capture the raw body so we can verify Meta's HMAC signature over the exact
@@ -77,6 +78,7 @@ const KB = loadKB();
 const pendingEscalations = loadPendingEscalations();
 const contacts = new ContactStore(DATA_DIR);
 const push = new PushService(DATA_DIR);
+const media = new MediaService(DATA_DIR);
 const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 function loadConversations() {
@@ -87,19 +89,65 @@ function loadConversations() {
   } catch { return {}; }
 }
 
+// Writes are coalesced: every change bumps `convRev` (the app polls with it to
+// skip unchanged responses) and the whole file is written at most once per
+// second, compact, async and atomically (tmp + rename) so a crash mid-write
+// can't corrupt it. On shutdown (Railway redeploy sends SIGTERM) we flush.
+let convRev = 1;
+let saveTimer = null;
+let saving = false;
+let dirty = false;
 function saveConversations() {
-  fs.writeFileSync(CONV_FILE, JSON.stringify(conversations, null, 2));
+  convRev++;
+  dirty = true;
+  if (!saveTimer) saveTimer = setTimeout(flushConversations, 1000);
+}
+async function flushConversations() {
+  saveTimer = null;
+  if (!dirty) return;
+  if (saving) { saveTimer = setTimeout(flushConversations, 500); return; }
+  dirty = false;
+  saving = true;
+  const tmp = CONV_FILE + ".tmp";
+  try {
+    await fs.promises.writeFile(tmp, JSON.stringify(conversations));
+    await fs.promises.rename(tmp, CONV_FILE);
+  } catch (e) {
+    console.error("❌ saving conversations failed:", e.message);
+    dirty = true;
+    if (!saveTimer) saveTimer = setTimeout(flushConversations, 5000);
+  } finally {
+    saving = false;
+  }
+}
+function flushConversationsSync() {
+  if (!dirty) return;
+  try {
+    fs.writeFileSync(CONV_FILE + ".tmp", JSON.stringify(conversations));
+    fs.renameSync(CONV_FILE + ".tmp", CONV_FILE);
+    dirty = false;
+  } catch (e) { console.error("❌ final save failed:", e.message); }
+}
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => { flushConversationsSync(); process.exit(0); });
 }
 
 const conversations = loadConversations();
-// Prune conversations not seen in 60 days
+// Prune conversations not seen in 60 days — at startup and then daily, so the
+// data stays bounded even if the server runs for months without a redeploy.
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
-for (const phone of Object.keys(conversations)) {
-  const last = conversations[phone].lastSeen;
-  if (!last || Date.now() - new Date(last).getTime() > SIXTY_DAYS_MS) {
-    delete conversations[phone];
+function pruneOldConversations() {
+  let removed = 0;
+  for (const phone of Object.keys(conversations)) {
+    const last = conversations[phone].lastSeen;
+    if (!last || Date.now() - new Date(last).getTime() > SIXTY_DAYS_MS) {
+      delete conversations[phone];
+      removed++;
+    }
   }
+  if (removed) { console.log(`🧹 Pruned ${removed} conversations idle > 60 days`); saveConversations(); }
 }
+pruneOldConversations();
 
 let websiteContent = null;
 
@@ -393,13 +441,14 @@ function ensureConversation(phone, name) {
 }
 
 // Records a message Lia/the team sent, with its wamid for read receipts.
-function pushOutgoing(conv, { content, sender, senderName, result, template }) {
+function pushOutgoing(conv, { content, sender, senderName, result, template, media }) {
   const msg = {
     role: "assistant", content, sender, timestamp: new Date().toISOString(),
     wamid: result?.wamid || null, status: result?.ok === false ? "failed" : "sent",
   };
   if (senderName) msg.senderName = senderName;
   if (template) msg.template = template;
+  if (media) Object.assign(msg, media); // { media, mediaId, mimeType, filename }
   conv.messages.push(msg);
   return msg;
 }
@@ -435,9 +484,16 @@ const MEDIA_LABELS = {
 };
 async function recordNonTextMessage(phoneNumber, customerName, message) {
   const conv = ensureConversation(phoneNumber, customerName);
-  const caption = message[message.type]?.caption;
+  const part = message[message.type] || {};
+  const caption = part.caption;
   const label = (MEDIA_LABELS[message.type] || "הודעה") + (caption ? `: ${caption}` : "");
-  conv.messages.push({ role: "user", sender: "user", content: label, media: message.type, timestamp: new Date().toISOString() });
+  const msg = { role: "user", sender: "user", content: label, media: message.type, timestamp: new Date().toISOString() };
+  if (part.id) { msg.mediaId = part.id; msg.mimeType = part.mime_type || null; msg.filename = part.filename || null; }
+  if (caption) msg.caption = caption;
+  if (message.type === "location") {
+    msg.location = { lat: part.latitude, lng: part.longitude, name: part.name || null };
+  }
+  conv.messages.push(msg);
   conv.lastSeen = new Date().toISOString();
   conv.unread = (conv.unread || 0) + 1;
   conv.conversationClosed = false;
@@ -1280,7 +1336,8 @@ app.get("/conversation-messages", (req, res) => {
 // Team app (/app) + its JSON API (/api)
 mountTeamApp(app, {
   conversations, saveConversations, ensureConversation, pushOutgoing,
-  contacts, push, KB,
+  contacts, push, media, KB,
+  getRev: () => convRev,
   saveKB: () => fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2)),
   pendingEscalations, clearPendingEscalation,
   sendWhatsAppMessage, sendWhatsAppTemplate,
@@ -1291,6 +1348,10 @@ app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
   console.log(`Webhook: http://localhost:${PORT}/webhook`);
   websiteContent = await fetchWebsiteKB();
+
+  // Daily housekeeping: drop idle conversations and old cached media files.
+  setInterval(() => { pruneOldConversations(); media.prune(); }, 24 * 60 * 60 * 1000);
+  media.prune();
 
   setInterval(async () => {
     const now = Date.now();

@@ -22,6 +22,11 @@
     card: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M7.5 17c.9-2 2.6-3 4.5-3s3.6 1 4.5 3"/></svg>',
     globe: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.7 5.7 3.7 9s-1.2 6.3-3.7 9c-2.5-2.7-3.7-5.7-3.7-9S9.5 5.7 12 3z"/></svg>',
     sheet: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6M12 10v8"/></svg>',
+    clip: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg>',
+    camera: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+    gallery: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>',
+    file: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>',
+    pin: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>',
     clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     x: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   };
@@ -126,6 +131,10 @@
     contactFilter: "all",
     contactQ: "",
     importAutoSave: true,
+    listRev: null,        // server rev of the last list we got — unchanged polls are tiny
+    chatRev: null,
+    chatAll: false,       // long chat: user asked for older messages
+    searchResults: null,  // server-side search over all chats (incl. older than the list)
   };
 
   // ── Router ─────────────────────────────────────────────────────────────────
@@ -183,18 +192,22 @@
 
   // ── Chats list ─────────────────────────────────────────────────────────────
   function filteredConvs() {
-    const q = state.q.trim().toLowerCase();
-    const qd = q.replace(/\D/g, "");
-    return state.convs.filter((c) => {
+    const base = state.q.trim() && state.searchResults ? state.searchResults : state.convs;
+    return base.filter((c) => {
       if (state.filter === "unread" && !c.unread) return false;
       if (state.filter === "team" && !c.humanMode) return false;
       if (state.filter === "lia" && c.humanMode) return false;
-      if (!q) return true;
-      return (c.name || "").toLowerCase().includes(q) ||
-        (qd.length >= 3 && (c.phone.includes(qd) || c.phone.includes("972" + qd.replace(/^0/, "")))) ||
-        String(c.lastMessage && c.lastMessage.content || "").toLowerCase().includes(q);
+      return true;
     });
   }
+  const runSearch = debounce(async () => {
+    const q = state.q.trim();
+    if (!q) { state.searchResults = null; renderListItems(); return; }
+    try {
+      const d = await api("/conversations?q=" + encodeURIComponent(q));
+      if (state.q.trim() === q) { state.searchResults = d.conversations; renderListItems(); }
+    } catch { /* ignore */ }
+  }, 250);
 
   function renderList() {
     if (!side.querySelector(".list-head")) {
@@ -218,7 +231,7 @@
         <div id="waiting"></div>
         <div class="scroll" id="conv-list"></div>
         <a class="fab" href="#/new" aria-label="שיחה חדשה">${I.newChat}</a>`;
-      $("#list-q").addEventListener("input", (e) => { state.q = e.target.value; renderListItems(); });
+      $("#list-q").addEventListener("input", (e) => { state.q = e.target.value; runSearch(); });
     }
     $("#me-sub").textContent = `אורבן בייקרי · ${state.me ? state.me.name : ""}`;
     side.querySelectorAll("[data-filter]").forEach((b) => {
@@ -244,7 +257,7 @@
     if (!list) return;
     const items = filteredConvs();
     if (!items.length) {
-      list.innerHTML = `<div class="empty">${state.convs.length ? "אין שיחות שמתאימות לסינון" : "עדיין אין שיחות.<br>כשלקוחות יכתבו לליה, השיחות יופיעו כאן."}</div>`;
+      list.innerHTML = `<div class="empty">${state.q.trim() ? "לא נמצאו שיחות" : state.convs.length ? "אין שיחות שמתאימות לסינון" : "עדיין אין שיחות.<br>כשלקוחות יכתבו לליה, השיחות יופיעו כאן."}</div>`;
       return;
     }
     list.innerHTML = items.map((c) => {
@@ -274,9 +287,11 @@
     if (e.target.closest('[data-act="menu"]')) openMenu();
   });
 
-  async function loadConvs() {
+  async function loadConvs(force) {
     try {
-      const data = await api("/conversations");
+      const data = await api("/conversations" + (state.listRev && !force ? "?rev=" + state.listRev : ""));
+      if (data.unchanged) return;
+      state.listRev = data.rev;
       state.convs = data.conversations;
       renderListItems();
       updateBadge();
@@ -295,6 +310,8 @@
     renderListItems();
     if (fresh) {
       state.chat = null;
+      state.chatRev = null;
+      state.chatAll = false;
       main.innerHTML = `
         <div class="pane chat" style="height:100%;width:100%">
           <header class="topbar" id="chat-head"></header>
@@ -309,12 +326,17 @@
     const phone = state.chatPhone;
     if (!phone) return;
     let c;
-    try { c = await api("/conversations/" + encodeURIComponent(phone)); }
+    const qs = [];
+    if (state.chatRev && state.chat) qs.push("rev=" + state.chatRev);
+    if (state.chatAll) qs.push("all=1");
+    try { c = await api("/conversations/" + encodeURIComponent(phone) + (qs.length ? "?" + qs.join("&") : "")); }
     catch (e) {
       if (e.status === 404) { main.innerHTML = `<div class="empty-main">השיחה לא נמצאה</div>`; }
       return;
     }
     if (state.chatPhone !== phone) return;
+    if (c.unchanged) return;
+    state.chatRev = c.rev;
     const prev = state.chat;
     state.chat = c;
     const local = state.convs.find((x) => x.phone === phone);
@@ -324,7 +346,8 @@
     const box = $("#msgs");
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
     if (!prev || prev.messages.length !== c.messages.length || JSON.stringify(prev.messages.slice(-5)) !== JSON.stringify(c.messages.slice(-5))) {
-      box.innerHTML = renderMessages(c.messages);
+      const older = c.olderCount ? `<button class="day" data-act="older" style="border:0">הצגת ${c.olderCount} הודעות קודמות</button>` : "";
+      box.innerHTML = older + renderMessages(c.messages);
       if (scroll || nearBottom) box.scrollTop = box.scrollHeight;
     }
     const dockKey = [c.humanMode, c.windowOpen, c.waitingForTeam, c.pendingQuestion, c.humanBy].join("|");
@@ -366,9 +389,33 @@
           ? `<span class="meta failed">לא נשלח · ${esc(clock(m.timestamp))}</span>`
           : `<span class="meta">${esc(clock(m.timestamp))} ${tick(m.status)}</span>`)
         : `<span class="meta">${esc(clock(m.timestamp))}</span>`;
-      html += `<div class="bubble ${sideKey}${gap}">${who}${tpl}<span class="txt${m.media ? " media" : ""}">${esc(m.content)}</span>${meta}</div>`;
+      html += `<div class="bubble ${sideKey}${gap}${m.mediaId && (m.media === "image" || m.media === "sticker" || m.media === "video") ? " has-media" : ""}">${who}${tpl}${renderBody(m)}${meta}</div>`;
     }
     return html || `<div class="sys">אין הודעות עדיין</div>`;
+  }
+
+  function mediaUrl(m, download) {
+    const q = [];
+    if (m.filename) q.push("name=" + encodeURIComponent(m.filename));
+    if (download) q.push("download=1");
+    return `/api/media/${encodeURIComponent(m.mediaId)}${q.length ? "?" + q.join("&") : ""}`;
+  }
+  function fmtSize(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
+
+  function renderBody(m) {
+    const cap = m.caption ? `<span class="txt">${esc(m.caption)}</span>` : "";
+    if (m.location) {
+      const href = `https://maps.google.com/?q=${encodeURIComponent(m.location.lat + "," + m.location.lng)}`;
+      return `<a class="doc" href="${href}" target="_blank" rel="noopener">${I.pin}<span class="dn">${esc(m.location.name || "מיקום")}</span></a>`;
+    }
+    if (!m.mediaId) return `<span class="txt${m.media ? " media" : ""}">${esc(m.content)}</span>`;
+    if (m.media === "image" || m.media === "sticker") {
+      return `<a href="${mediaUrl(m)}" target="_blank" rel="noopener" class="media-link"><img class="media-img${m.media === "sticker" ? " sticker" : ""}" src="${mediaUrl(m)}" alt="${esc(m.caption || "תמונה")}" loading="lazy"></a>${cap}`;
+    }
+    if (m.media === "video") return `<video class="media-img" src="${mediaUrl(m)}" controls preload="metadata"></video>${cap}`;
+    if (m.media === "audio" || m.media === "voice") return `<audio class="media-audio" src="${mediaUrl(m)}" controls preload="none"></audio>`;
+    const name = m.filename || (m.mimeType === "application/pdf" ? "מסמך.pdf" : "קובץ");
+    return `<a class="doc" href="${mediaUrl(m, true)}" download="${esc(name)}">${I.file}<span class="dn">${esc(name)}</span></a>${cap}`;
   }
 
   function renderDock(c) {
@@ -409,6 +456,8 @@
           <label class="sr-only" for="composer-text">הודעה</label>
           <textarea id="composer-text" rows="1" placeholder="${c.humanMode ? "הודעה" : "הקלידו כדי לענות בעצמכם"}" enterkeyhint="send"></textarea>
           <button type="button" class="icon-btn" data-act="pick-template" aria-label="תבנית">${I.tpl}</button>
+          <button type="button" class="icon-btn" data-act="attach" aria-label="צירוף תמונה או קובץ">${I.clip}</button>
+          <button type="button" class="icon-btn" data-act="camera" aria-label="מצלמה">${I.camera}</button>
         </div>
         <button class="send" type="submit" aria-label="שלח">${I.send}</button>
       </form>`;
@@ -437,7 +486,7 @@
       await api(`/conversations/${state.chatPhone}/send`, { body: { text, saveToKB: saveKB } });
       ta.value = ""; autoGrow(ta);
       await refreshChat(true);
-      loadConvs();
+      loadConvs(true);
     } catch (e) {
       if (e.status === 409) { toast("עברו 24 שעות — אפשר לשלוח רק תבנית"); await refreshChat(); }
       else if (e.status === 502) toast("ההודעה לא נשלחה: " + ((e.data && e.data.detail) || "שגיאה מ-WhatsApp"));
@@ -452,15 +501,132 @@
     if (a === "take" || a === "release") {
       try {
         await api(`/conversations/${state.chatPhone}/${a}`, { method: "POST", body: {} });
-        await refreshChat(true); loadConvs();
+        await refreshChat(true); loadConvs(true);
         if (a === "release") toast("ליה חזרה לענות בשיחה");
       } catch { toast("משהו השתבש, נסו שוב"); }
     } else if (a === "pick-template") {
       openTemplateSheet(state.chatPhone, state.chat && state.chat.name);
     } else if (a === "chat-menu") {
       openChatMenu();
+    } else if (a === "older") {
+      state.chatAll = true; state.chatRev = null; state.chat = null;
+      await refreshChat(false);
+      $("#msgs").scrollTop = 0;
+    } else if (a === "attach") {
+      openAttachSheet();
+    } else if (a === "camera") {
+      pickFiles("image/*,video/*", "environment");
     }
   });
+
+  // ── Attachments ────────────────────────────────────────────────────────────
+  const MAX_FILE = 30 * 1024 * 1024; // server limit (file is relayed through our server)
+  function openAttachSheet() {
+    openSheet("צירוף", `
+      <div style="display:flex;flex-direction:column">
+        <button class="opt" data-pick="gallery"><span class="oi">${I.gallery}</span><span class="ot"><span class="o1">תמונות וסרטונים</span><span class="o2">מהגלריה</span></span></button>
+        <button class="opt" data-pick="camera"><span class="oi">${I.camera}</span><span class="ot"><span class="o1">מצלמה</span><span class="o2">צילום עכשיו</span></span></button>
+        <button class="opt" data-pick="file"><span class="oi">${I.file}</span><span class="ot"><span class="o1">קובץ</span><span class="o2">PDF, מסמך, תפריט — עד 30MB</span></span></button>
+      </div>`, (root, close) => {
+      root.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", () => {
+        const k = b.dataset.pick;
+        close();
+        if (k === "gallery") pickFiles("image/*,video/*", null, true);
+        else if (k === "camera") pickFiles("image/*,video/*", "environment");
+        else pickFiles("", null, true);
+      }));
+    });
+  }
+
+  function pickFiles(accept, capture, multiple) {
+    const input = document.createElement("input");
+    input.type = "file";
+    if (accept) input.accept = accept;
+    if (capture) input.setAttribute("capture", capture);
+    if (multiple) input.multiple = true;
+    input.style.display = "none";
+    input.addEventListener("change", () => {
+      const files = Array.from(input.files || []);
+      input.remove();
+      if (files.length) openMediaPreview(files.slice(0, 10));
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  // Phones produce huge photos (and HEIC/WebP). WhatsApp images must be
+  // JPEG/PNG ≤ 5MB, so re-encode big or unusual images to a 2048px JPEG.
+  async function prepareImage(file) {
+    if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+    const ok = (file.type === "image/jpeg" || file.type === "image/png") && file.size <= 4.5 * 1024 * 1024;
+    if (ok) return file;
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bmp.width * scale);
+      canvas.height = Math.round(bmp.height * scale);
+      canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.85));
+      if (!blob) return file;
+      return new File([blob], (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+    } catch { return file; } // undecodable (e.g. HEIC on Android) → sent as a document
+  }
+
+  function openMediaPreview(files) {
+    const phone = state.chatPhone;
+    const urls = [];
+    const items = files.map((f) => {
+      if (f.type.startsWith("image/")) { const u = URL.createObjectURL(f); urls.push(u); return `<img class="pv-img" src="${u}" alt="">`; }
+      if (f.type.startsWith("video/")) { const u = URL.createObjectURL(f); urls.push(u); return `<video class="pv-img" src="${u}" muted playsinline></video>`; }
+      return `<div class="doc">${I.file}<span class="dn">${esc(f.name)} · ${fmtSize(f.size)}</span></div>`;
+    }).join("");
+    const tooBig = files.filter((f) => f.size > MAX_FILE);
+    const close = openSheet(files.length > 1 ? `שליחת ${files.length} קבצים` : "שליחה", `
+      <div class="form">
+        <div class="pv-grid">${items}</div>
+        ${tooBig.length ? `<div class="info">${esc(tooBig.map((f) => f.name).join(", "))} גדול מ-30MB ולא יישלח</div>` : ""}
+        <div class="f"><label for="pv-caption">כיתוב (לא חובה)</label><input id="pv-caption" type="text" maxlength="1024" placeholder="הוסיפו כיתוב"></div>
+        <button class="btn big" data-send-media>${I.send} שליחה</button>
+        <div class="pv-status" role="status"></div>
+      </div>`, (root, closeSheet) => {
+      const btn = root.querySelector("[data-send-media]");
+      const status = root.querySelector(".pv-status");
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        const caption = root.querySelector("#pv-caption").value.trim();
+        const list = files.filter((f) => f.size <= MAX_FILE);
+        let sent = 0;
+        for (let i = 0; i < list.length; i++) {
+          status.textContent = list.length > 1 ? `שולח ${i + 1} מתוך ${list.length}…` : "שולח…";
+          const f = await prepareImage(list[i]);
+          try {
+            const res = await fetch(`/api/conversations/${phone}/media`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": f.type || "application/octet-stream",
+                "X-Filename": encodeURIComponent(f.name || "file"),
+                "X-Caption": encodeURIComponent(i === 0 ? caption : ""),
+              },
+              body: f,
+            });
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({}));
+              if (res.status === 409) { toast("עברו 24 שעות — אפשר לשלוח רק תבנית"); break; }
+              toast(`${f.name}: לא נשלח${d.detail ? " — " + d.detail : ""}`);
+              continue;
+            }
+            sent++;
+          } catch { toast(`${f.name}: לא נשלח, בדקו חיבור`); }
+        }
+        urls.forEach((u) => URL.revokeObjectURL(u));
+        closeSheet();
+        if (sent) { await refreshChat(true); loadConvs(); }
+      });
+    });
+    return close;
+  }
 
   // ── Sheets ─────────────────────────────────────────────────────────────────
   function openSheet(title, html, onMount) {
@@ -498,7 +664,7 @@
         const tpl = root.querySelector('input[name="tpl"]:checked').value;
         try {
           await api(`/conversations/${phone}/template`, { body: { template: tpl } });
-          close(); toast("התבנית נשלחה"); await refreshChat(true); loadConvs();
+          close(); toast("התבנית נשלחה"); await refreshChat(true); loadConvs(true);
         } catch (ex) {
           e.target.disabled = false;
           toast("לא נשלח: " + ((ex.data && ex.data.detail) || "שגיאה"));
@@ -687,7 +853,7 @@
           close(); toast("נשמר");
           if (parseRoute().name === "contacts") loadContacts();
           if (state.chatPhone) refreshChat();
-          loadConvs();
+          loadConvs(true);
         } catch (ex) { toast(ex.message === "bad_phone" ? "מספר הטלפון לא תקין" : "לא נשמר, נסו שוב"); }
       });
     });
@@ -818,7 +984,7 @@
           phone: $("#n-phone").value, name: $("#n-name").value,
           template: (form.querySelector('input[name="tpl"]:checked') || {}).value,
         } });
-        await loadConvs();
+        await loadConvs(true);
         go("#/chat/" + r.phone);
       } catch (ex) {
         btn.disabled = false;
@@ -832,7 +998,7 @@
     try { state.me = await api("/me"); }
     catch { if (!state.me) renderLogin(); return; }
     side.innerHTML = "";
-    await loadConvs();
+    await loadConvs(true);
     route();
   }
 
