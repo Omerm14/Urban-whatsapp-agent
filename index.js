@@ -11,6 +11,7 @@ const { parseReply } = require("./lib/replyTags");
 const mountTeamApp = require("./lib/api");
 const { MediaService } = require("./lib/media");
 const { TeamStore } = require("./lib/team");
+const { TemplateService } = require("./lib/templates");
 
 const app = express();
 // Capture the raw body so we can verify Meta's HMAC signature over the exact
@@ -52,9 +53,9 @@ function loadKB() {
     fs.writeFileSync(KB_FILE, JSON.stringify(stored, null, 2));
     console.log(`📚 KB merged ${newEntries.length} new entries from seed`);
   }
-  // Always keep business info and message templates in sync with seed
+  // Always keep business info in sync with seed
   stored.business = seed.business;
-  stored.templates = seed.templates || [];
+  delete stored.templates; // templates now come live from Meta (lib/templates.js)
   return stored;
 }
 
@@ -81,6 +82,7 @@ const contacts = new ContactStore(DATA_DIR);
 const push = new PushService(DATA_DIR);
 const media = new MediaService(DATA_DIR);
 const team = new TeamStore(DATA_DIR);
+const templates = new TemplateService();
 // Push goes to PUSH_OWNER (by name) if set, otherwise to the team admin.
 push.resolveOwner = () => {
   const byName = process.env.PUSH_OWNER && team.members().find(m => m.name === process.env.PUSH_OWNER);
@@ -398,12 +400,13 @@ async function sendWhatsAppMessage(phoneNumber, message) {
   }
 }
 
-// `params` fills the template body variables ({{1}}, {{2}}, ...) in order.
+// `params` fills the template body variables in order: plain strings, or
+// ready-made parameter objects ({ type, text, parameter_name }) for named ones.
 async function sendWhatsAppTemplate(phoneNumber, templateName, languageCode = "he", params = []) {
-  const url = `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
+  const url = `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   const template = { name: templateName, language: { code: languageCode } };
   if (params.length) {
-    template.components = [{ type: "body", parameters: params.map(t => ({ type: "text", text: String(t) })) }];
+    template.components = [{ type: "body", parameters: params.map(t => (typeof t === "object" ? t : { type: "text", text: String(t) })) }];
   }
   try {
     const res = await axios.post(
@@ -1343,7 +1346,7 @@ app.get("/conversation-messages", (req, res) => {
 // Team app (/app) + its JSON API (/api)
 mountTeamApp(app, {
   conversations, saveConversations, ensureConversation, pushOutgoing,
-  contacts, push, media, team, KB, MANAGER_PHONE,
+  contacts, push, media, team, templates, KB, MANAGER_PHONE,
   getRev: () => convRev,
   saveKB: () => fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2)),
   pendingEscalations, clearPendingEscalation,

@@ -581,7 +581,7 @@
     if (!c.windowOpen) {
       html = `
         <div class="closed-window">
-          <div class="info">${I.clock}<span>עברו 24 שעות מההודעה האחרונה של הלקוח. WhatsApp מאפשרת לשלוח עכשיו רק תבנית מאושרת — אחרי שהלקוח עונה כותבים חופשי.</span></div>
+          <div class="info">${I.clock}<span>הלקוח לא כתב ב-24 השעות האחרונות, ולכן WhatsApp מאפשרת לשלוח לו עכשיו רק תבנית מאושרת (גם אם כבר דיברתם בעבר). ברגע שהוא עונה — כותבים חופשי שוב.</span></div>
           <button class="btn big" data-act="pick-template">${I.tpl} בחירת תבנית</button>
           ${c.humanMode ? "" : `<div class="b" style="font-size:12.5px">ליה תענה אוטומטית אם הלקוח יכתוב.</div>`}
         </div>`;
@@ -800,30 +800,73 @@
     return close;
   }
 
-  async function loadTemplates() {
-    if (!state.templates) state.templates = (await api("/templates")).templates;
+  // Templates come live from Meta: only APPROVED ones, with their real text.
+  async function loadTemplates(refresh) {
+    if (!state.templates || refresh) {
+      const d = await api("/templates" + (refresh ? "?refresh=1" : ""));
+      state.templates = d.templates || [];
+      state.templatesError = d.error || null;
+    }
     return state.templates;
+  }
+  const tplKey = (t) => `${t.name}|${t.language}`;
+  function tplFill(t, values) {
+    const map = new Map(t.params.map((p, i) => [p.key, values[i] || ""]));
+    return (t.header ? t.header + "\n" : "") + t.text.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => map.get(k) || `[${k === "1" ? "שם" : k}]`);
+  }
+  function tplEmpty() {
+    return `<div class="info">${I.clock}<span>${state.templatesError === "meta_error" || state.templatesError === "no_waba"
+      ? "לא הצלחנו לקרוא את התבניות מ-Meta. בדקו שהטוקן בתוקף."
+      : "עדיין אין תבניות מאושרות. יוצרים ב-WhatsApp Manager ← Message templates, ותבנית מופיעה כאן ברגע ש-Meta מאשרת אותה."}</span></div>
+      <button type="button" class="btn ghost" data-tpl-refresh>רענון</button>`;
+  }
+  // Template picker + variable fields + live preview, used by the chat sheet and the new-chat page.
+  function tplPicker(root, tpls, getFirstName) {
+    const list = root.querySelector("[data-tpl-list]");
+    const fields = root.querySelector("[data-tpl-fields]");
+    const preview = root.querySelector("[data-tpl-preview]");
+    if (!tpls.length) { list.innerHTML = tplEmpty(); fields.innerHTML = ""; preview.textContent = ""; return { selected: () => null, values: () => [] }; }
+    list.innerHTML = tpls.map((t, i) => `
+      <label class="tpl-opt"><span class="tt"><span class="t1">${esc(t.label)}${tpls.some((x, j) => j !== i && x.name === t.name) ? ` · ${esc(t.language)}` : ""}</span><span class="t2">${esc(t.text)}</span></span>
+      <input type="radio" name="tpl" value="${esc(tplKey(t))}" ${i === 0 ? "checked" : ""}></label>`).join("");
+    const selected = () => tpls.find((t) => tplKey(t) === (list.querySelector('input[name="tpl"]:checked') || {}).value) || null;
+    const values = () => Array.from(fields.querySelectorAll("[data-param]")).map((x) => x.value.trim());
+    const renderFields = () => {
+      const t = selected();
+      const first = (getFirstName() || "").trim();
+      fields.innerHTML = t.params.map((p, i) => `
+        <div class="f"><label for="tp-${i}">${i === 0 && p.firstName ? "שם הלקוח בהודעה" : `ערך עבור ${esc(p.key === String(i + 1) ? "{{" + p.key + "}}" : p.key)}`}</label>
+        <input id="tp-${i}" type="text" data-param="${i}" value="${i === 0 && !/^\d+$/.test(first) ? esc(first) : ""}" required></div>`).join("");
+      update();
+    };
+    const update = () => { const t = selected(); preview.textContent = t ? tplFill(t, values()) : ""; };
+    list.addEventListener("change", renderFields);
+    fields.addEventListener("input", update);
+    renderFields();
+    return { selected, values, update };
   }
 
   async function openTemplateSheet(phone, name) {
-    const tpls = await loadTemplates();
-    const first = (name || "").split(" ")[0];
+    const tpls = await loadTemplates(true).catch(() => []);
     openSheet("שליחת תבנית", `
       <div class="form">
-        ${tpls.map((t, i) => `
-          <label class="tpl-opt"><span class="tt"><span class="t1">${esc(t.label)}</span><span class="t2">${esc((t.preview || "").replace("[שם]", first || "[שם]"))}</span></span>
-          <input type="radio" name="tpl" value="${esc(t.name)}" ${i === 0 ? "checked" : ""}></label>`).join("") || `<div class="info">אין תבניות מוגדרות</div>`}
+        <div data-tpl-list></div>
+        <div data-tpl-fields style="display:flex;flex-direction:column;gap:12px"></div>
+        <div class="preview-box"><span class="lbl" style="font-size:12px;color:var(--muted)">כך זה יגיע ללקוח</span><div class="bubble out"><span class="txt" data-tpl-preview></span></div></div>
         <button class="btn big" data-send-tpl ${tpls.length ? "" : "disabled"}>שליחה</button>
       </div>`, (root, close) => {
+      const picker = tplPicker(root, tpls, () => (name || "").split(" ")[0]);
+      const refresh = root.querySelector("[data-tpl-refresh]");
+      if (refresh) refresh.addEventListener("click", () => { close(); openTemplateSheet(phone, name); });
       root.querySelector("[data-send-tpl]").addEventListener("click", async (e) => {
+        const t = picker.selected(); if (!t) return;
         e.target.disabled = true;
-        const tpl = root.querySelector('input[name="tpl"]:checked').value;
         try {
-          await api(`/conversations/${phone}/template`, { body: { template: tpl } });
+          await api(`/conversations/${phone}/template`, { body: { template: t.name, language: t.language, values: picker.values() } });
           close(); toast("התבנית נשלחה"); await refreshChat(true); loadConvs(true);
         } catch (ex) {
           e.target.disabled = false;
-          toast("לא נשלח: " + ((ex.data && ex.data.detail) || "שגיאה"));
+          toast(ex.message === "missing_value" ? "חסר ערך באחד השדות" : "לא נשלח: " + ((ex.data && ex.data.detail) || "שגיאה"));
         }
       });
     });
@@ -1160,7 +1203,7 @@
 
   // ── New chat ───────────────────────────────────────────────────────────────
   async function renderNew(params) {
-    const tpls = await loadTemplates().catch(() => []);
+    const tpls = await loadTemplates(true).catch(() => []);
     main.innerHTML = `
       <header class="topbar">
         <a class="icon-btn" href="#/" aria-label="חזרה לצ'אטים">${I.back}</a>
@@ -1170,12 +1213,13 @@
         <div class="form">
           <div class="f"><label for="n-phone">מספר טלפון</label><input id="n-phone" type="tel" dir="ltr" style="text-align:right" required value="${esc(params.phone ? fmtPhone(params.phone) : "")}" placeholder="05X-XXX-XXXX"></div>
           <div class="f"><label for="n-name">שם</label><input id="n-name" type="text" value="${esc(params.name || "")}"></div>
-          <div class="info">${I.clock}<span>הודעה ראשונה ללקוח חייבת להיות תבנית מאושרת. ברגע שהוא עונה — כותבים חופשי.</span></div>
+          <div class="info">${I.clock}<span>WhatsApp מאפשרת לפנות ללקוח רק בתבנית מאושרת, אלא אם הוא כתב לנו ב-24 השעות האחרונות. ברגע שהוא עונה — כותבים חופשי.</span></div>
           <div role="radiogroup" aria-label="בחירת תבנית">
-            <div class="section-title accent" style="padding:4px 0 4px">תבניות</div>
-            ${tpls.map((t, i) => `<label class="tpl-opt"><span class="tt"><span class="t1">${esc(t.label)}</span><span class="t2">${esc(t.preview || "")}</span></span><input type="radio" name="tpl" value="${esc(t.name)}" ${i === 0 ? "checked" : ""}></label>`).join("") || `<div class="info">אין תבניות מוגדרות</div>`}
+            <div class="section-title accent" style="padding:4px 0 4px">תבניות מאושרות</div>
+            <div data-tpl-list></div>
           </div>
-          <div class="preview-box"><span class="lbl" style="font-size:12px;color:var(--muted)">תצוגה מקדימה</span><div class="bubble out"><span class="txt" id="n-preview"></span></div></div>
+          <div data-tpl-fields style="display:flex;flex-direction:column;gap:12px"></div>
+          <div class="preview-box"><span class="lbl" style="font-size:12px;color:var(--muted)">כך זה יגיע ללקוח</span><div class="bubble out"><span class="txt" data-tpl-preview></span></div></div>
         </div>
         <div style="flex:1"></div>
         <div class="footer-bar">
@@ -1184,27 +1228,29 @@
         </div>
       </form>`;
     const form = $("#new-form");
-    const updatePreview = () => {
-      const t = tpls.find((x) => x.name === (form.querySelector('input[name="tpl"]:checked') || {}).value);
-      const first = $("#n-name").value.trim().split(" ")[0];
-      $("#n-preview").textContent = t ? (t.preview || t.label).replace("[שם]", first || "[שם]") : "";
-    };
-    form.addEventListener("input", updatePreview);
-    updatePreview();
+    const picker = tplPicker(form, tpls, () => $("#n-name").value.split(" ")[0]);
+    const refresh = form.querySelector("[data-tpl-refresh]");
+    if (refresh) refresh.addEventListener("click", () => renderNew(params));
+    $("#n-name").addEventListener("input", () => {
+      const f = form.querySelector('[data-param="0"]');
+      if (f && !f.dataset.touched) { f.value = $("#n-name").value.split(" ")[0]; picker.update && picker.update(); }
+    });
+    form.addEventListener("input", (e) => { if (e.target.matches('[data-param="0"]')) e.target.dataset.touched = "1"; });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      const t = picker.selected(); if (!t) return;
       const btn = form.querySelector(".round-send");
       btn.disabled = true;
       try {
         const r = await api("/conversations/new", { body: {
           phone: $("#n-phone").value, name: $("#n-name").value,
-          template: (form.querySelector('input[name="tpl"]:checked') || {}).value,
+          template: t.name, language: t.language, values: picker.values(),
         } });
         await loadConvs(true);
         go("#/chat/" + r.phone);
       } catch (ex) {
         btn.disabled = false;
-        toast(ex.message === "bad_phone" ? "מספר הטלפון לא תקין" : "לא נשלח: " + ((ex.data && ex.data.detail) || "שגיאה"));
+        toast(ex.message === "bad_phone" ? "מספר הטלפון לא תקין" : ex.message === "missing_value" ? "חסר ערך באחד השדות" : "לא נשלח: " + ((ex.data && ex.data.detail) || "שגיאה"));
       }
     });
   }
