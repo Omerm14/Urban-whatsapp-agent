@@ -1,7 +1,7 @@
 // Service worker for the Lia team app: offline shell + push notifications.
 // API calls are never cached — the app must always show live conversations.
-const CACHE = "lia-shell-v1";
-const SHELL = ["/app/", "/app/index.html", "/app/app.css", "/app/app.js", "/app/icon.svg", "/app/icon-192.png"];
+const CACHE = "lia-shell-v2";
+const SHELL = ["/app/", "/app/index.html", "/app/app.css", "/app/app.js", "/app/icon.svg", "/app/lia.svg", "/app/icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

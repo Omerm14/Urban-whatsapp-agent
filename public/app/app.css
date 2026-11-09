@@ -267,3 +267,28 @@ mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
 .pv-grid:has(> :only-child) .pv-img { aspect-ratio: auto; max-height: 50dvh; object-fit: contain; }
 .pv-status { font-size: 13px; color: var(--muted); text-align: center; min-height: 18px; }
 .field .icon-btn { width: 40px; height: 48px; color: var(--muted); }
+
+/* ── Login / setup / install ── */
+.login input.pin { letter-spacing: 10px; }
+.login .name-input { height: 50px; border-radius: 12px; border: 1px solid var(--line); background: var(--chip); text-align: center; font-size: 18px; outline: none; letter-spacing: 0; }
+.login .name-input:focus { border-color: var(--accent); }
+.login .lbl { font-size: 13px; color: var(--muted); text-align: start; margin-top: 4px; }
+.login .hint { font-size: 13.5px; color: var(--muted-2); line-height: 1.5; }
+.login .links { display: flex; justify-content: space-between; }
+.link { background: none; border: 0; color: var(--accent); font-size: 14px; padding: 8px 4px; }
+.link.danger { color: var(--danger); }
+.who-list { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 300px; }
+.install { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; text-align: start; }
+.steps li { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: var(--chip); font-size: 15px; line-height: 1.4; }
+.step-ico { width: 40px; height: 40px; border-radius: 10px; background: var(--surface); color: #1E78C8; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.team-list { display: flex; flex-direction: column; }
+.team-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 16px; }
+.team-row .tag { font-size: 11.5px; padding: 1px 8px; border-radius: 6px; background: var(--chip); color: var(--muted); }
+.invite-link { font-size: 12.5px; word-break: break-all; color: var(--muted); }
+
+/* ── Lia's face ── */
+.lia-face { border-radius: 50%; display: block; flex-shrink: 0; object-fit: cover; }
+.avatar .who.lia { background: var(--surface); padding: 0; overflow: hidden; }
+.avatar .who.lia .lia-face { width: 100%; height: 100%; }
+.lia-bar .ico { background: none; overflow: hidden; }

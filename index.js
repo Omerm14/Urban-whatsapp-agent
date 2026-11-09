@@ -10,6 +10,7 @@ const { PushService } = require("./lib/push");
 const { parseReply } = require("./lib/replyTags");
 const mountTeamApp = require("./lib/api");
 const { MediaService } = require("./lib/media");
+const { TeamStore } = require("./lib/team");
 
 const app = express();
 // Capture the raw body so we can verify Meta's HMAC signature over the exact
@@ -79,6 +80,12 @@ const pendingEscalations = loadPendingEscalations();
 const contacts = new ContactStore(DATA_DIR);
 const push = new PushService(DATA_DIR);
 const media = new MediaService(DATA_DIR);
+const team = new TeamStore(DATA_DIR);
+// Push goes to PUSH_OWNER (by name) if set, otherwise to the team admin.
+push.resolveOwner = () => {
+  const byName = process.env.PUSH_OWNER && team.members().find(m => m.name === process.env.PUSH_OWNER);
+  return (byName || team.admin())?.id || null;
+};
 const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
 function loadConversations() {
@@ -1336,7 +1343,7 @@ app.get("/conversation-messages", (req, res) => {
 // Team app (/app) + its JSON API (/api)
 mountTeamApp(app, {
   conversations, saveConversations, ensureConversation, pushOutgoing,
-  contacts, push, media, KB,
+  contacts, push, media, team, KB, MANAGER_PHONE,
   getRev: () => convRev,
   saveKB: () => fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2)),
   pendingEscalations, clearPendingEscalation,

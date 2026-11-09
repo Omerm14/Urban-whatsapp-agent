@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="112 56 288 288">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F6E3C6"/>
+      <stop offset="1" stop-color="#EBC994"/>
+    </linearGradient>
+  </defs>
+  <rect x="112" y="56" width="288" height="288" fill="url(#bg)"/>
+  <!-- hair back + bun -->
+  <circle cx="256" cy="118" r="54" fill="#5B3416"/>
+  <path d="M128 262c0-84 56-142 128-142s128 58 128 142v84c0 24-18 38-42 38H170c-24 0-42-14-42-38z" fill="#5B3416"/>
+  <!-- neck + shirt -->
+  <rect x="226" y="318" width="60" height="56" rx="20" fill="#E8A97E"/>
+  <path d="M120 512c6-92 64-140 136-140s130 48 136 140z" fill="#11753F"/>
+  <path d="M212 376l44 40 44-40" fill="none" stroke="#F6E3C6" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- face -->
+  <ellipse cx="256" cy="246" rx="94" ry="104" fill="#F2BE97"/>
+  <!-- bangs -->
+  <path d="M160 236c8-62 48-100 96-100s90 36 98 100c-42-8-78-30-98-62-18 34-52 54-96 62z" fill="#5B3416"/>
+  <!-- eyes, cheeks, smile -->
+  <ellipse cx="220" cy="254" rx="10" ry="13" fill="#2B1A0E"/>
+  <ellipse cx="292" cy="254" rx="10" ry="13" fill="#2B1A0E"/>
+  <circle cx="198" cy="288" r="15" fill="#EE9A86" opacity="0.65"/>
+  <circle cx="314" cy="288" r="15" fill="#EE9A86" opacity="0.65"/>
+  <path d="M226 300c18 20 42 20 60 0" fill="none" stroke="#8A3B22" stroke-width="10" stroke-linecap="round"/>
+  <!-- headset mic: she's on the line -->
+  <path d="M164 250c0-58 40-104 92-104s92 46 92 104" fill="none" stroke="#2F3A40" stroke-width="12" stroke-linecap="round"/>
+  <rect x="146" y="236" width="30" height="50" rx="12" fill="#2F3A40"/>
+  <path d="M160 286c4 26 30 40 62 40" fill="none" stroke="#2F3A40" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="226" cy="326" r="9" fill="#2F3A40"/>
+</svg>

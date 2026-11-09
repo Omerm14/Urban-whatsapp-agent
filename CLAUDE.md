@@ -46,7 +46,8 @@ Team app (/app, PWA) ⇄ /api (lib/api.js) → Meta API (sent from Lia's number)
 |------|------|
 | `index.js` | Webhook, Claude, follow-ups, legacy `/conversations` dashboard |
 | `lib/api.js` | `/api/*` for the team app + serves `public/app` |
-| `lib/auth.js` | Personal login codes (`TEAM_CODES`) → signed cookie |
+| `lib/team.js` | Team members (`team.json`): 6-digit PINs (scrypt), admin setup via WhatsApp code to `MANAGER_PHONE`, one-time invite links |
+| `lib/auth.js` | Signed session cookie (member id) + middleware |
 | `lib/contacts.js` | Phone book (`contacts.json`), vCard/CSV import, phone normalization |
 | `lib/push.js` | Web Push to Dor's phone (`push.json`, VAPID) |
 | `lib/replyTags.js` | Parses `[HANDOFF]` / `[ESCALATE]` |
@@ -77,12 +78,11 @@ Set in Railway → Variables (never commit to git):
 | `MANAGER_PHONE` | `+9720546408547` (Dor) |
 | `WEBHOOK_VERIFY_TOKEN` | `urban_bakery_secret_2026` (also protects the `/conversations` dashboard) |
 | `META_APP_SECRET` | Meta App secret (App → Settings → Basic). Verifies webhook `X-Hub-Signature-256`. If unset, verification is skipped (logged) so the webhook keeps working |
-| `DATA_DIR` | `/data` — Railway volume mount. Persists `conversations.json`, `escalations.json`, `pending_escalations.json`, `kb.json`, `contacts.json` and `push.json` across redeploys. Defaults to `.` locally |
-| `TEAM_CODES` | Personal login codes for the team app: `דור:1234,שני:5678` (name:code, comma separated) |
+| `DATA_DIR` | `/data` — Railway volume mount. Persists `conversations.json`, `escalations.json`, `pending_escalations.json`, `kb.json`, `contacts.json`, `team.json`, `push.json` and `media/` across redeploys. Defaults to `.` locally |
 | `APP_URL` | Public base URL used in links sent to Dor (default: the Railway URL) |
 | `APP_SECRET` | Optional — signs team-app session cookies (falls back to `WEBHOOK_VERIFY_TOKEN`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys. Generate once: `npx web-push generate-vapid-keys`. If unset, push is disabled |
-| `PUSH_OWNER` | Team member who gets push notifications (default `דור`) |
+| `PUSH_OWNER` | Optional — name of the team member who gets push notifications (default: the team admin) |
 | `PORT` | `8080` (Railway default) |
 
 > **PII note**: `chat-history/*.zip` are real exported WhatsApp chats used once to
@@ -99,7 +99,7 @@ Set in Railway → Variables (never commit to git):
 |----------|--------|-------------|
 | `/webhook` | GET | Meta webhook verification |
 | `/webhook` | POST | Receive WhatsApp messages |
-| `/app/` | GET | Team app (PWA) — login with a personal code |
+| `/app/` | GET | Team app (PWA). First open: a 6-digit code goes to Dor's WhatsApp, he picks a PIN and becomes admin. Others join via an invite link from ⋮ → ניהול צוות (one-time, 48h), choose name + PIN, then get install instructions |
 | `/api/*` | — | Team app API (session cookie) |
 | `/health` | GET | Health check — returns `{ status, business, uptime_s, metrics }` where `metrics` = `{ answered, escalated, sendFailed }` (in-memory counters, reset on redeploy) |
 
