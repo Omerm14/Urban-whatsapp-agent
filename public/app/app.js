@@ -30,6 +30,8 @@
     clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     x: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   };
+  // Lia's face (public/app/lia.svg) wherever Lia is the one acting.
+  const LIA = (size) => `<img class="lia-face" src="lia.svg" width="${size}" height="${size}" alt="" aria-hidden="true">`;
   const tick = (status) => {
     if (status === "failed") return "";
     const read = status === "read";
@@ -60,7 +62,7 @@
   function avatar(name, phone, size, who) {
     const [bg, fg] = AVATAR_COLORS[hash(phone) % AVATAR_COLORS.length];
     const badge = who === "lia"
-      ? `<span class="who lia" role="img" aria-label="ליה עונה">${I.bot(11)}</span>`
+      ? `<span class="who lia" role="img" aria-label="ליה עונה">${LIA(18)}</span>`
       : who === "team" ? `<span class="who team" role="img" aria-label="הצוות עונה">${I.person(11)}</span>` : "";
     return `<div class="avatar ${size || ""}"><div class="circle" style="background:${bg};color:${fg}">${initial(name, phone)}</div>${badge}</div>`;
   }
@@ -112,7 +114,7 @@
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       credentials: "same-origin",
     });
-    if (res.status === 401 && path !== "/login") { state.me = null; renderLogin(); throw new Error("unauthorized"); }
+    if (res.status === 401 && state.me) { state.me = null; renderLogin(); throw new Error("unauthorized"); }
     let data = null;
     try { data = await res.json(); } catch { /* empty */ }
     if (!res.ok) { const e = new Error((data && data.error) || res.status); e.data = data; e.status = res.status; throw e; }
@@ -161,33 +163,180 @@
   }
   window.addEventListener("hashchange", route);
 
-  // ── Login ──────────────────────────────────────────────────────────────────
-  function renderLogin() {
+  // ── Login, first setup, invites, install ───────────────────────────────────
+  const LS = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  };
+  const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  let installPrompt = null; // Android/desktop Chrome one-tap install
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; });
+  window.addEventListener("appinstalled", () => { installPrompt = null; });
+
+  const PIN_ERR = { wrong_pin: "קוד שגוי", locked: "יותר מדי ניסיונות — נסו שוב בעוד רבע שעה", too_many_attempts: "יותר מדי ניסיונות — נסו שוב בעוד רבע שעה" };
+  const pinInput = (id, label, auto) => `
+    <label class="sr-only" for="${id}">${label}</label>
+    <input id="${id}" class="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="${auto || "current-password"}" placeholder="••••••" required>`;
+  function loginShell(title, sub, inner) {
     document.body.classList.add("route-main");
     side.innerHTML = "";
     main.innerHTML = `
       <div class="login">
         <img class="logo" src="icon.svg" alt="">
-        <h1>ליה · אורבן בייקרי</h1>
-        <p>הכניסו את קוד הכניסה האישי שלכם</p>
-        <form id="login-form">
-          <label class="sr-only" for="code">קוד כניסה</label>
-          <input id="code" type="password" inputmode="numeric" autocomplete="one-time-code" required autofocus>
-          <button class="btn big" type="submit">כניסה</button>
-          <div class="err" id="login-err" role="alert"></div>
-        </form>
+        <h1>${title}</h1>
+        ${sub ? `<p>${sub}</p>` : ""}
+        ${inner}
       </div>`;
-    $("#login-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const err = $("#login-err");
-      err.textContent = "";
+  }
+
+  async function renderLogin() {
+    const r = parseRoute();
+    if (r.name === "join" && r.arg) return renderJoin(r.arg);
+    let st;
+    try { st = await api("/team/status"); } catch { loginShell("ליה · אורבן", "אין חיבור לשרת. נסו שוב בעוד רגע.", ""); return; }
+    if (st.needsSetup) return renderOwnerSetup(true);
+    const last = LS.get("lia_member");
+    const chosen = st.members.find((m) => m.id === last);
+    if (!chosen) {
+      loginShell("ליה · אורבן בייקרי", "מי נכנס?", `
+        <div class="who-list">${st.members.map((m) => `<button class="btn ghost big" data-member="${esc(m.id)}">${esc(m.name)}</button>`).join("")}</div>
+        <p class="hint">עוד לא ברשימה? בקשו מדור קישור הזמנה.</p>`);
+      main.querySelectorAll("[data-member]").forEach((b) => b.addEventListener("click", () => { LS.set("lia_member", b.dataset.member); renderLogin(); }));
+      return;
+    }
+    loginShell(`היי ${esc(chosen.name)}`, "הקלידו את הקוד בן 6 הספרות", `
+      <form id="login-form">
+        ${pinInput("pin", "קוד כניסה")}
+        <button class="btn big" type="submit">כניסה</button>
+        <div class="err" id="login-err" role="alert"></div>
+        <div class="links"><button type="button" class="link" data-switch>זה לא אני</button><button type="button" class="link" data-forgot>שכחתי קוד</button></div>
+      </form>`);
+    const pin = $("#pin");
+    pin.focus();
+    const submit = async () => {
+      $("#login-err").textContent = "";
+      try { await api("/login", { body: { id: chosen.id, pin: pin.value } }); await boot(); }
+      catch (ex) { $("#login-err").textContent = PIN_ERR[ex.message] || "משהו השתבש, נסו שוב"; pin.value = ""; pin.focus(); }
+    };
+    $("#login-form").addEventListener("submit", (e) => { e.preventDefault(); submit(); });
+    pin.addEventListener("input", () => { if (/^\d{6}$/.test(pin.value)) submit(); });
+    main.querySelector("[data-switch]").addEventListener("click", () => { LS.set("lia_member", ""); renderLogin(); });
+    main.querySelector("[data-forgot]").addEventListener("click", () => {
+      if (chosen.role === "admin") renderOwnerSetup(false);
+      else toast("בקשו מדור קישור הזמנה חדש");
+    });
+  }
+
+  // First-ever setup (creates the admin) or admin "forgot my code":
+  // a 6-digit code goes to the owner's WhatsApp, then they choose a PIN.
+  function renderOwnerSetup(first) {
+    loginShell(first ? "ברוכים הבאים לליה" : "איפוס קוד", first
+      ? "הגדרה ראשונה: נשלח קוד אימות לוואטסאפ של דור"
+      : "נשלח קוד אימות לוואטסאפ של דור", `
+      <form id="otp-form">
+        <button class="btn big" type="button" id="send-otp">שליחת קוד לוואטסאפ</button>
+        <div id="otp-step" hidden>
+          <p class="hint" id="otp-sent"></p>
+          <label class="lbl" for="otp">קוד מהוואטסאפ</label>
+          <input id="otp" class="pin" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••">
+          ${first ? `<label class="lbl" for="owner-name">השם שלך</label><input id="owner-name" class="name-input" type="text" value="דור" maxlength="40">` : ""}
+          <label class="lbl" for="new-pin">בחרו קוד כניסה (6 ספרות)</label>
+          ${pinInput("new-pin", "קוד כניסה חדש", "new-password")}
+          <button class="btn big" type="submit">${first ? "יצירת חשבון" : "שמירת קוד"}</button>
+        </div>
+        <div class="err" id="otp-err" role="alert"></div>
+        ${first ? "" : `<div class="links"><button type="button" class="link" data-back>חזרה</button></div>`}
+      </form>`);
+    const err = $("#otp-err");
+    const sendBtn = $("#send-otp");
+    sendBtn.addEventListener("click", async () => {
+      err.textContent = ""; sendBtn.disabled = true;
       try {
-        await api("/login", { body: { code: $("#code").value } });
-        await boot();
+        const r = await api("/team/owner-code", { body: {} });
+        $("#otp-step").hidden = false;
+        $("#otp-sent").textContent = `שלחנו קוד לוואטסאפ ${r.sentTo}`;
+        sendBtn.textContent = "שליחה חוזרת";
+        $("#otp").focus();
+        setTimeout(() => { sendBtn.disabled = false; }, 60000);
       } catch (ex) {
-        err.textContent = ex.status === 429 ? "יותר מדי ניסיונות. נסו שוב בעוד רבע שעה." : "קוד שגוי";
+        sendBtn.disabled = false;
+        err.textContent = ex.message === "wait" ? "חכו דקה לפני שליחה חוזרת"
+          : "לא הצלחנו לשלוח. שלחו הודעה כלשהי מהטלפון של דור למספר של ליה, ונסו שוב.";
       }
     });
+    const back = main.querySelector("[data-back]");
+    if (back) back.addEventListener("click", renderLogin);
+    $("#otp-form").addEventListener("submit", async (e) => {
+      e.preventDefault(); err.textContent = "";
+      try {
+        const me = await api("/team/owner-verify", { body: {
+          code: $("#otp").value.trim(), pin: $("#new-pin").value, name: $("#owner-name") ? $("#owner-name").value : undefined,
+        } });
+        LS.set("lia_member", me.id);
+        renderInstall(me.name);
+      } catch (ex) {
+        err.textContent = ex.message === "bad_pin" ? "הקוד צריך להיות 6 ספרות" : ex.message === "wrong_code" ? "קוד האימות שגוי או שפג תוקפו" : "משהו השתבש, נסו שוב";
+      }
+    });
+  }
+
+  async function renderJoin(token) {
+    let inv;
+    try { inv = await api("/team/invite/" + encodeURIComponent(token)); }
+    catch { loginShell("הקישור לא בתוקף", "הקישור כבר נוצל או שעברו 48 שעות. בקשו מדור קישור חדש.", ""); return; }
+    loginShell("הצטרפות לליה", `${inv.invitedBy ? esc(inv.invitedBy) + " הזמין/ה אותך" : "הוזמנת"} לתיבת השיחות של אורבן בייקרי`, `
+      <form id="join-form">
+        <label class="lbl" for="join-name">השם שלך (יופיע ללקוחות ליד ההודעות)</label>
+        <input id="join-name" class="name-input" type="text" maxlength="40" required autocomplete="name">
+        <label class="lbl" for="join-pin">בחרו קוד כניסה (6 ספרות)</label>
+        ${pinInput("join-pin", "קוד כניסה", "new-password")}
+        <button class="btn big" type="submit">הצטרפות</button>
+        <div class="err" id="join-err" role="alert"></div>
+      </form>`);
+    $("#join-name").focus();
+    $("#join-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const me = await api("/team/join", { body: { token, name: $("#join-name").value, pin: $("#join-pin").value } });
+        LS.set("lia_member", me.id);
+        history.replaceState(null, "", location.pathname + "#/");
+        renderInstall(me.name);
+      } catch (ex) {
+        $("#join-err").textContent = { name_taken: "השם הזה כבר תפוס — הוסיפו שם משפחה", bad_pin: "הקוד צריך להיות 6 ספרות", bad_name: "חסר שם", invalid_invite: "הקישור כבר לא בתוקף" }[ex.message] || "משהו השתבש, נסו שוב";
+      }
+    });
+  }
+
+  // After joining: get Lia onto the home screen like a regular app.
+  function renderInstall(name) {
+    if (isStandalone()) return boot();
+    const ios = isIOS();
+    const shareIco = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v8h14v-8"/></svg>';
+    const plusIco = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg>';
+    loginShell(`מעולה${name ? ", " + esc(name) : ""}!`, "עכשיו נתקין את ליה בטלפון — כמו אפליקציה רגילה", `
+      <div class="install">
+        ${ios ? `
+          <ol class="steps">
+            <li><span class="step-ico">${shareIco}</span><span>לוחצים על <b>שיתוף</b> בתחתית ספארי</span></li>
+            <li><span class="step-ico">${plusIco}</span><span>בוחרים <b>"הוסף למסך הבית"</b> ← הוסף</span></li>
+            <li><span class="step-ico"><img src="icon-180.png" alt="" width="28" height="28" style="border-radius:7px"></span><span>פותחים את <b>ליה</b> מהמסך הבית ונכנסים עם הקוד</span></li>
+          </ol>
+          <p class="hint">חייבים לפתוח בספארי. ההתראות באייפון עובדות רק מהאפליקציה שבמסך הבית.</p>`
+        : `<button class="btn big" id="do-install" ${installPrompt ? "" : "hidden"}>התקנת האפליקציה</button>
+           <p class="hint" id="install-alt" ${installPrompt ? "hidden" : ""}>בתפריט הדפדפן ⋮ בחרו <b>"התקנת אפליקציה"</b> או <b>"הוספה למסך הבית"</b>.</p>`}
+        <button class="btn ghost big" id="skip-install">${ios ? "סיימתי / אמשיך בדפדפן" : "אחר כך"}</button>
+      </div>`);
+    const btn = $("#do-install");
+    if (btn) btn.addEventListener("click", async () => {
+      if (!installPrompt) return;
+      installPrompt.prompt();
+      const choice = await installPrompt.userChoice.catch(() => null);
+      installPrompt = null;
+      if (choice && choice.outcome === "accepted") toast("ליה הותקנה במסך הבית");
+      boot();
+    });
+    $("#skip-install").addEventListener("click", boot);
   }
 
   // ── Chats list ─────────────────────────────────────────────────────────────
@@ -357,7 +506,7 @@
   function renderChatHead(c) {
     const status = c.humanMode
       ? `<span class="t2 team">${I.person(12)} ${esc(c.humanBy || "הצוות")} בשיחה · ליה בהמתנה</span>`
-      : `<span class="t2 lia">${I.bot(12)} ליה עונה בשיחה</span>`;
+      : `<span class="t2 lia">${LIA(16)} ליה עונה בשיחה</span>`;
     $("#chat-head").innerHTML = `
       <a class="icon-btn back-btn" href="#/" aria-label="חזרה לצ'אטים">${I.back}</a>
       ${avatar(c.name, c.phone, "sm")}
@@ -381,7 +530,7 @@
       const gap = lastSide && lastSide !== sideKey ? " gap" : "";
       lastSide = sideKey;
       let who = "";
-      if (m.sender === "lia") who = `<span class="who lia">${I.bot(12)} ליה</span>`;
+      if (m.sender === "lia") who = `<span class="who lia">${LIA(16)} ליה</span>`;
       else if (m.sender === "team") who = `<span class="who" style="color:${teamColor(m.senderName)}">${esc(m.senderName || "צוות")}</span>`;
       const tpl = m.template ? `<span class="tpl">תבנית</span>` : "";
       const meta = out
@@ -434,11 +583,11 @@
       return;
     }
     if (c.humanMode) {
-      html += `<div class="resume"><span class="pill">${I.bot(14)} ליה בהמתנה <button data-act="release">החזר לליה</button></span></div>`;
+      html += `<div class="resume"><span class="pill">${LIA(18)} ליה בהמתנה <button data-act="release">החזר לליה</button></span></div>`;
     } else {
       html += `
         <div class="lia-bar">
-          <span class="ico">${I.bot(18)}</span>
+          <span class="ico">${LIA(36)}</span>
           <span class="txts"><span class="a">ליה מטפלת בשיחה</span><span class="b">ברגע שתכתבו — ליה עוצרת</span></span>
           <button class="btn" data-act="take">קח את השיחה</button>
         </div>`;
@@ -692,14 +841,12 @@
   function openMenu() {
     const me = state.me;
     const p = me.push || {};
-    const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
     let pushHtml = "";
     if (me.isPushOwner) {
       if (!p.enabled) pushHtml = `<div class="info">התראות לטלפון עדיין לא הוגדרו בשרת (מפתחות VAPID).</div>`;
       else if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        pushHtml = iOS && !standalone
-          ? `<div class="info">באייפון: לחצו על כפתור השיתוף ← "הוסף למסך הבית", פתחו את ליה מהמסך הבית, ואז הפעילו כאן התראות.</div>`
+        pushHtml = isIOS() && !isStandalone()
+          ? `<div class="info">באייפון: שיתוף ← "הוסף למסך הבית", פתחו את ליה מהמסך הבית, ואז הפעילו כאן התראות.</div>`
           : `<div class="info">הדפדפן הזה לא תומך בהתראות.</div>`;
       } else {
         pushHtml = `<button class="btn big" data-push>${p.subscribed ? "התראות פעילות · שליחת בדיקה" : "הפעלת התראות בטלפון"}</button>`;
@@ -708,8 +855,11 @@
     openSheet(me.name, `
       <div class="form" style="gap:10px">
         ${pushHtml}
+        ${me.role === "admin" ? `<button class="btn ghost big" data-team>ניהול צוות · הוספת מנהל</button>` : ""}
+        ${isStandalone() ? "" : `<button class="btn ghost big" data-install>התקנת האפליקציה בטלפון</button>`}
         <a class="btn ghost big" href="#/contacts" data-close>אנשי קשר</a>
         <a class="btn ghost big" href="#/import" data-close>ייבוא אנשי קשר</a>
+        <button class="btn ghost big" data-pin>החלפת קוד כניסה</button>
         <button class="btn ghost big" data-logout>התנתקות</button>
       </div>`, (root, close) => {
       const pb = root.querySelector("[data-push]");
@@ -719,9 +869,68 @@
           else { await enablePush(); toast("ההתראות הופעלו"); close(); }
         } catch (ex) { toast(ex.message === "denied" ? "ההרשאה להתראות נחסמה בהגדרות הטלפון" : "לא הצלחנו להפעיל התראות"); }
       });
+      const tb = root.querySelector("[data-team]");
+      if (tb) tb.addEventListener("click", () => { close(); openTeamSheet(); });
+      const ib = root.querySelector("[data-install]");
+      if (ib) ib.addEventListener("click", () => { close(); renderInstall(""); });
+      root.querySelector("[data-pin]").addEventListener("click", () => { close(); openChangePin(); });
       root.querySelector("[data-logout]").addEventListener("click", async () => {
         await api("/logout", { method: "POST", body: {} }).catch(() => {});
         close(); state.me = null; renderLogin();
+      });
+    });
+  }
+
+  async function openTeamSheet() {
+    const { members } = await api("/team");
+    openSheet("ניהול צוות", `
+      <div class="form" style="gap:10px">
+        <div class="team-list">${members.map((m) => `
+          <div class="team-row"><span class="tn">${esc(m.name)}${m.role === "admin" ? ' <span class="tag">מנהל ראשי</span>' : ""}</span>
+          ${m.role === "admin" ? "" : `<button class="link danger" data-remove="${esc(m.id)}" data-name="${esc(m.name)}">הסרה</button>`}</div>`).join("")}</div>
+        <button class="btn big" data-invite>הוספת מנהל</button>
+        <div id="invite-box"></div>
+      </div>`, (root, close) => {
+      root.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
+        if (!confirm(`להסיר את ${b.dataset.name}? הגישה שלו/ה לאפליקציה תיחסם מיד.`)) return;
+        await api("/team/" + b.dataset.remove, { method: "DELETE" });
+        close(); toast("הוסר/ה"); openTeamSheet();
+      }));
+      root.querySelector("[data-invite]").addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        const inv = await api("/team/invite", { method: "POST", body: {} });
+        const link = `${location.origin}/app/#/join/${inv.token}`;
+        const text = `הוזמנת לאפליקציה של ליה — תיבת השיחות של אורבן בייקרי. פתחו את הקישור, בחרו שם וקוד, והתקינו בטלפון:\n${link}`;
+        root.querySelector("#invite-box").innerHTML = `
+          <div class="card">
+            <strong>קישור הזמנה חד-פעמי · בתוקף 48 שעות</strong>
+            <span class="invite-link" dir="ltr">${esc(link)}</span>
+            <a class="btn" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">שליחה בוואטסאפ</a>
+            <button class="btn ghost" data-copy>העתקת הקישור</button>
+          </div>`;
+        root.querySelector("[data-copy]").addEventListener("click", async () => {
+          try {
+            if (navigator.share) await navigator.share({ text });
+            else { await navigator.clipboard.writeText(link); toast("הקישור הועתק"); }
+          } catch { /* cancelled */ }
+        });
+      });
+    });
+  }
+
+  function openChangePin() {
+    openSheet("החלפת קוד כניסה", `
+      <form class="form" id="pin-form">
+        <div class="f"><label for="cur-pin">הקוד הנוכחי</label><input id="cur-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="current-password" required></div>
+        <div class="f"><label for="nw-pin">קוד חדש (6 ספרות)</label><input id="nw-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" required></div>
+        <button class="btn big" type="submit">שמירה</button>
+      </form>`, (root, close) => {
+      root.querySelector("#pin-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          await api("/me/pin", { body: { current: root.querySelector("#cur-pin").value, pin: root.querySelector("#nw-pin").value } });
+          close(); toast("הקוד הוחלף");
+        } catch (ex) { toast(ex.message === "bad_pin" ? "הקוד החדש צריך להיות 6 ספרות" : PIN_ERR[ex.message] || "הקוד הנוכחי שגוי"); }
       });
     });
   }
@@ -997,6 +1206,7 @@
   async function boot() {
     try { state.me = await api("/me"); }
     catch { if (!state.me) renderLogin(); return; }
+    if (parseRoute().name === "join") history.replaceState(null, "", location.pathname + "#/");
     side.innerHTML = "";
     await loadConvs(true);
     route();
