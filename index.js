@@ -17,6 +17,17 @@ const app = express();
 // Capture the raw body so we can verify Meta's HMAC signature over the exact
 // bytes Meta signed (JSON re-serialization would change them).
 app.use(express.json({ limit: "5mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
+// Railway sits behind a proxy: use the client's real IP for rate limits.
+app.set("trust proxy", 1);
+
+// The old token-in-URL dashboard is replaced by the team app (/app). It's off
+// unless LEGACY_DASHBOARD=1, because its token is shared and it exposes chats.
+const LEGACY_PATHS = ["/conversations", "/conversations-data", "/conversation-messages", "/hijack", "/release", "/send"];
+app.use(LEGACY_PATHS, (req, res, next) => {
+  if (process.env.LEGACY_DASHBOARD === "1") return next();
+  if (req.method === "GET" && req.baseUrl === "/conversations") return res.redirect(302, "/app/");
+  return res.status(410).json({ error: "moved_to_app", url: "/app/" });
+});
 
 const ANTHROPIC_HEADERS = {
   "x-api-key": process.env.ANTHROPIC_API_KEY,
@@ -1346,7 +1357,7 @@ app.get("/conversation-messages", (req, res) => {
 // Team app (/app) + its JSON API (/api)
 mountTeamApp(app, {
   conversations, saveConversations, ensureConversation, pushOutgoing,
-  contacts, push, media, team, templates, KB, MANAGER_PHONE,
+  contacts, push, media, team, templates, KB, MANAGER_PHONE, dataDir: DATA_DIR,
   getRev: () => convRev,
   saveKB: () => fs.writeFileSync(KB_FILE, JSON.stringify(KB, null, 2)),
   pendingEscalations, clearPendingEscalation,

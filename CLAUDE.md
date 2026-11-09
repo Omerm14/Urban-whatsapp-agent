@@ -77,12 +77,13 @@ Set in Railway → Variables (never commit to git):
 | `WHATSAPP_API_TOKEN` | Meta access token — **expires ~24h in dev mode**, needs refresh or permanent System User token |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `MANAGER_PHONE` | `+9720546408547` (Dor) |
-| `WEBHOOK_VERIFY_TOKEN` | `urban_bakery_secret_2026` (also protects the `/conversations` dashboard) |
+| `WEBHOOK_VERIFY_TOKEN` | Meta webhook verify token (set in Railway; don't write the value here) |
 | `META_APP_SECRET` | Meta App secret (App → Settings → Basic). Verifies webhook `X-Hub-Signature-256`. If unset, verification is skipped (logged) so the webhook keeps working |
 | `DATA_DIR` | `/data` — Railway volume mount. Persists `conversations.json`, `escalations.json`, `pending_escalations.json`, `kb.json`, `contacts.json`, `team.json`, `push.json` and `media/` across redeploys. Defaults to `.` locally |
 | `APP_URL` | Public base URL used in links sent to Dor (default: the Railway URL) |
 | `WHATSAPP_BUSINESS_ACCOUNT_ID` | Optional — WABA id for reading templates. If unset it's discovered from the access token |
-| `APP_SECRET` | Optional — signs team-app session cookies (falls back to `WEBHOOK_VERIFY_TOKEN`) |
+| `APP_SECRET` | Optional — signs team-app session cookies. If unset, a random key is generated once and kept in `DATA_DIR/app_secret` |
+| `LEGACY_DASHBOARD` | Set to `1` to re-enable the old `/conversations?token=` dashboard (off by default; `/conversations` redirects to `/app/`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys. Generate once: `npx web-push generate-vapid-keys`. If unset, push is disabled |
 | `PUSH_OWNER` | Optional — name of the team member who gets push notifications (default: the team admin) |
 | `PORT` | `8080` (Railway default) |

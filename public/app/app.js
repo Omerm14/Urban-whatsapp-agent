@@ -108,15 +108,22 @@
 
   // ── API ────────────────────────────────────────────────────────────────────
   async function api(path, opts = {}) {
-    const res = await fetch("/api" + path, {
+    let res;
+    try {
+      res = await fetch("/api" + path, {
       method: opts.method || (opts.body ? "POST" : "GET"),
       headers: opts.body ? { "Content-Type": "application/json" } : {},
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       credentials: "same-origin",
-    });
-    if (res.status === 401 && state.me) { state.me = null; renderLogin(); throw new Error("unauthorized"); }
+      });
+    } catch {
+      const e = new Error("offline"); e.status = 0; throw e;
+    }
     let data = null;
     try { data = await res.json(); } catch { /* empty */ }
+    if (res.status === 401 && state.me && data && data.error === "unauthorized") {
+      state.me = null; closeAllSheets(); renderLogin(); throw new Error("unauthorized");
+    }
     if (!res.ok) { const e = new Error((data && data.error) || res.status); e.data = data; e.status = res.status; throw e; }
     return data;
   }
@@ -148,9 +155,21 @@
     return { name: parts[0] || "list", arg: parts[1] ? decodeURIComponent(parts[1]) : null, params };
   }
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
+  // In-app "back" arrows: return to the previous in-app screen instead of
+  // stacking a new history entry (so the phone's Back button doesn't loop).
+  let inAppDepth = 0;
+  window.addEventListener("hashchange", () => { inAppDepth++; });
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a.icon-btn[href^='#/']");
+    if (!a || !a.getAttribute("aria-label") || !/^חזרה/.test(a.getAttribute("aria-label"))) return;
+    e.preventDefault();
+    if (inAppDepth > 0) { inAppDepth -= 2; history.back(); }
+    else location.replace(a.getAttribute("href"));
+  });
 
   async function route() {
     if (!state.me) return;
+    if (openSheets.length && !history.state?.sheet) closeAllSheets(); // navigated away under a sheet
     const r = parseRoute();
     document.body.classList.toggle("route-main", r.name !== "list");
     renderList();
@@ -190,11 +209,21 @@
       </div>`;
   }
 
+  // Server unreachable (offline, redeploy): never strand the user — retry button + auto retry.
+  function renderOffline() {
+    loginShell("אין חיבור כרגע", "לא הצלחנו להגיע לשרת. בדקו את החיבור לאינטרנט.", `
+      <button class="btn big" id="retry">נסו שוב</button>`);
+    $("#retry").addEventListener("click", boot);
+  }
+  window.addEventListener("online", () => { if (!state.me) boot(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !state.me && $("#retry")) boot(); });
+
   async function renderLogin() {
+    closeAllSheets();
     const r = parseRoute();
     if (r.name === "join" && r.arg) return renderJoin(r.arg);
     let st;
-    try { st = await api("/team/status"); } catch { loginShell("ליה · אורבן", "אין חיבור לשרת. נסו שוב בעוד רגע.", ""); return; }
+    try { st = await api("/team/status"); } catch { renderOffline(); return; }
     if (st.needsSetup) return renderOwnerSetup(true);
     const last = LS.get("lia_member");
     const chosen = st.members.find((m) => m.id === last);
@@ -214,10 +243,14 @@
       </form>`);
     const pin = $("#pin");
     pin.focus();
+    let busy = false;
     const submit = async () => {
+      if (busy) return;
+      busy = true;
       $("#login-err").textContent = "";
       try { await api("/login", { body: { id: chosen.id, pin: pin.value } }); await boot(); }
-      catch (ex) { $("#login-err").textContent = PIN_ERR[ex.message] || "משהו השתבש, נסו שוב"; pin.value = ""; pin.focus(); }
+      catch (ex) { $("#login-err").textContent = ex.status === 0 ? "אין חיבור לשרת" : PIN_ERR[ex.message] || "משהו השתבש, נסו שוב"; pin.value = ""; pin.focus(); }
+      finally { busy = false; }
     };
     $("#login-form").addEventListener("submit", (e) => { e.preventDefault(); submit(); });
     pin.addEventListener("input", () => { if (/^\d{6}$/.test(pin.value)) submit(); });
@@ -291,7 +324,13 @@
   async function renderJoin(token) {
     let inv;
     try { inv = await api("/team/invite/" + encodeURIComponent(token)); }
-    catch { loginShell("הקישור לא בתוקף", "הקישור כבר נוצל או שעברו 48 שעות. בקשו מדור קישור חדש.", ""); return; }
+    catch (e) {
+      if (e.status === 0 || e.status >= 500) { renderOffline(); return; }
+      loginShell("הקישור לא בתוקף", "הקישור כבר נוצל או שעברו 48 שעות. בקשו מדור קישור חדש.", `
+        <button class="btn ghost big" id="to-login">למסך הכניסה</button>`);
+      $("#to-login").addEventListener("click", () => { history.replaceState(null, "", location.pathname + "#/"); renderLogin(); });
+      return;
+    }
     loginShell("הצטרפות לליה", `${inv.invitedBy ? esc(inv.invitedBy) + " הזמין/ה אותך" : "הוזמנת"} לתיבת השיחות של אורבן בייקרי`, `
       <form id="join-form">
         <label class="lbl" for="join-name">השם שלך (יופיע ללקוחות ליד ההודעות)</label>
@@ -362,7 +401,7 @@
     try {
       const d = await api("/conversations?q=" + encodeURIComponent(q));
       if (state.q.trim() === q) { state.searchResults = d.conversations; renderListItems(); }
-    } catch { /* ignore */ }
+    } catch { state.searchResults = []; renderListItems(); }
   }, 250);
 
   function renderList() {
@@ -470,7 +509,7 @@
       state.chatAll = false;
       main.innerHTML = `
         <div class="pane chat" style="height:100%;width:100%">
-          <header class="topbar" id="chat-head"></header>
+          <header class="topbar" id="chat-head"><a class="icon-btn back-btn" href="#/" aria-label="חזרה לצ'אטים">${I.back}</a><div class="titles"><span class="t1">${esc(phone)}</span><span class="t2">טוען…</span></div></header>
           <div class="msgs" id="msgs" aria-live="polite"></div>
           <div class="dock" id="dock"></div>
         </div>`;
@@ -487,7 +526,12 @@
     if (state.chatAll) qs.push("all=1");
     try { c = await api("/conversations/" + encodeURIComponent(phone) + (qs.length ? "?" + qs.join("&") : "")); }
     catch (e) {
-      if (e.status === 404) { main.innerHTML = `<div class="empty-main">השיחה לא נמצאה</div>`; }
+      if (e.status === 404) {
+        main.innerHTML = `<header class="topbar"><a class="icon-btn" href="#/" aria-label="חזרה לצ'אטים">${I.back}</a><div class="titles"><span class="t1">השיחה לא נמצאה</span></div></header>
+          <div class="empty-main">השיחה נמחקה או שאינה קיימת</div>`;
+      } else if (!state.chat && $("#chat-head .t2")) {
+        $("#chat-head .t2").textContent = "אין חיבור — מנסה שוב…";
+      }
       return;
     }
     if (state.chatPhone !== phone) return;
@@ -576,7 +620,12 @@
 
   function renderDock(c) {
     const dock = $("#dock");
-    const draft = $("#composer-text") ? $("#composer-text").value : "";
+    const prevTa = $("#composer-text");
+    if (prevTa) state.draft = { phone: c.phone, text: prevTa.value };
+    const draft = state.draft && state.draft.phone === c.phone ? state.draft.text : "";
+    const hadFocus = prevTa && document.activeElement === prevTa;
+    const prevKB = $("#save-kb");
+    const saveKBChecked = prevKB ? prevKB.checked : true;
     let html = "";
     if (!c.windowOpen) {
       html = `
@@ -603,14 +652,14 @@
       html += `
         <div class="question">
           <span>ליה לא ידעה לענות על: <q>${esc(c.pendingQuestion)}</q></span>
-          <label><input type="checkbox" id="save-kb" checked> לשמור את התשובה שלי לליה לפעם הבאה</label>
+          <label><input type="checkbox" id="save-kb" ${saveKBChecked ? "checked" : ""}> לשמור את התשובה שלי לליה לפעם הבאה</label>
         </div>`;
     }
     html += `
       <form class="composer" id="composer">
         <div class="field">
           <label class="sr-only" for="composer-text">הודעה</label>
-          <textarea id="composer-text" rows="1" placeholder="${c.humanMode ? "הודעה" : "הקלידו כדי לענות בעצמכם"}" enterkeyhint="send"></textarea>
+          <textarea id="composer-text" rows="1" placeholder="${c.humanMode ? "הודעה" : "הקלידו כדי לענות בעצמכם"}" enterkeyhint="enter"></textarea>
           <button type="button" class="icon-btn" data-act="pick-template" aria-label="תבנית">${I.tpl}</button>
           <button type="button" class="icon-btn" data-act="attach" aria-label="צירוף תמונה או קובץ">${I.clip}</button>
           <button type="button" class="icon-btn" data-act="camera" aria-label="מצלמה">${I.camera}</button>
@@ -622,7 +671,8 @@
     const ta = $("#composer-text");
     ta.value = draft;
     autoGrow(ta);
-    ta.addEventListener("input", () => autoGrow(ta));
+    if (hadFocus) ta.focus();
+    ta.addEventListener("input", () => { autoGrow(ta); state.draft = { phone: c.phone, text: ta.value }; });
     ta.addEventListener("keydown", (e) => {
       // Enter sends on desktop; on phones Enter adds a line (send button instead).
       if (e.key === "Enter" && !e.shiftKey && matchMedia("(pointer: fine)").matches) { e.preventDefault(); sendMessage(); }
@@ -640,7 +690,7 @@
     const saveKB = $("#save-kb") ? $("#save-kb").checked : false;
     try {
       await api(`/conversations/${state.chatPhone}/send`, { body: { text, saveToKB: saveKB } });
-      ta.value = ""; autoGrow(ta);
+      ta.value = ""; autoGrow(ta); state.draft = null;
       await refreshChat(true);
       loadConvs(true);
     } catch (e) {
@@ -750,6 +800,7 @@
       const status = root.querySelector(".pv-status");
       btn.addEventListener("click", async () => {
         btn.disabled = true;
+        root.classList.add("busy"); // ignore backdrop taps while uploading
         const caption = root.querySelector("#pv-caption").value.trim();
         const list = files.filter((f) => f.size <= MAX_FILE);
         let sent = 0;
@@ -770,6 +821,7 @@
             if (!res.ok) {
               const d = await res.json().catch(() => ({}));
               if (res.status === 409) { toast("עברו 24 שעות — אפשר לשלוח רק תבנית"); break; }
+              if (res.status === 401) { toast("פג תוקף ההתחברות — היכנסו שוב"); state.me = null; closeAllSheets(); renderLogin(); return; }
               toast(`${f.name}: לא נשלח${d.detail ? " — " + d.detail : ""}`);
               continue;
             }
@@ -818,6 +870,7 @@
     back.addEventListener("click", (e) => {
       const link = e.target.closest("a[href^='#']");
       if (link) { doClose(true); return; } // navigating: let the link change the route
+      if (back.classList.contains("busy")) return;
       if (e.target === back || e.target.closest("[data-close]")) close();
     });
     // Swipe down on the header to dismiss.
@@ -910,8 +963,16 @@
     return { selected, values, update };
   }
 
+  let tplOpening = false;
   async function openTemplateSheet(phone, name) {
-    const tpls = await loadTemplates(true).catch(() => []);
+    if (tplOpening) return;
+    tplOpening = true;
+    const closeLoading = openSheet("שליחת תבנית", `<div class="form"><div class="info">טוען תבניות מ-Meta…</div></div>`);
+    let tpls;
+    try { tpls = await loadTemplates(true); } catch { tpls = []; state.templatesError = "meta_error"; }
+    finally { tplOpening = false; }
+    if (!openSheets.length) return; // closed while loading
+    closeLoading();
     openSheet("שליחת תבנית", `
       <div class="form">
         <div data-tpl-list></div>
@@ -998,23 +1059,27 @@
   }
 
   async function openTeamSheet() {
-    const { members } = await api("/team");
+    let members;
+    try { ({ members } = await api("/team")); } catch { toast("לא הצלחנו לטעון את הצוות, נסו שוב"); return; }
     openSheet("ניהול צוות", `
       <div class="form" style="gap:10px">
         <div class="team-list">${members.map((m) => `
           <div class="team-row"><span class="tn">${esc(m.name)}${m.role === "admin" ? ' <span class="tag">מנהל ראשי</span>' : ""}</span>
           ${m.role === "admin" ? "" : `<button class="link danger" data-remove="${esc(m.id)}" data-name="${esc(m.name)}">הסרה</button>`}</div>`).join("")}</div>
-        <button class="btn big" data-invite>הוספת מנהל</button>
+        <button class="btn big" data-invite>הוספת מנהל · יצירת קישור הזמנה</button>
         <div id="invite-box"></div>
       </div>`, (root, close) => {
       root.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
         if (!confirm(`להסיר את ${b.dataset.name}? הגישה שלו/ה לאפליקציה תיחסם מיד.`)) return;
-        await api("/team/" + b.dataset.remove, { method: "DELETE" });
+        try { await api("/team/" + b.dataset.remove, { method: "DELETE" }); }
+        catch { toast("ההסרה נכשלה, נסו שוב"); return; }
         close(); toast("הוסר/ה"); openTeamSheet();
       }));
       root.querySelector("[data-invite]").addEventListener("click", async (e) => {
         e.target.disabled = true;
-        const inv = await api("/team/invite", { method: "POST", body: {} });
+        let inv;
+        try { inv = await api("/team/invite", { method: "POST", body: {} }); }
+        catch { e.target.disabled = false; toast("לא הצלחנו ליצור קישור, נסו שוב"); return; }
         const link = `${location.origin}/app/#/join/${inv.token}`;
         const text = `הוזמנת לאפליקציה של ליה — תיבת השיחות של אורבן בייקרי. פתחו את הקישור, בחרו שם וקוד, והתקינו בטלפון:\n${link}`;
         root.querySelector("#invite-box").innerHTML = `
@@ -1023,13 +1088,14 @@
             <span class="invite-link" dir="ltr">${esc(link)}</span>
             <a class="btn" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">שליחה בוואטסאפ</a>
             <button class="btn ghost" data-copy>העתקת הקישור</button>
+            ${navigator.share ? `<button class="btn ghost" data-share>שיתוף…</button>` : ""}
           </div>`;
         root.querySelector("[data-copy]").addEventListener("click", async () => {
-          try {
-            if (navigator.share) await navigator.share({ text });
-            else { await navigator.clipboard.writeText(link); toast("הקישור הועתק"); }
-          } catch { /* cancelled */ }
+          try { await navigator.clipboard.writeText(link); toast("הקישור הועתק"); }
+          catch { toast("לחצו לחיצה ארוכה על הקישור כדי להעתיק"); }
         });
+        const sh = root.querySelector("[data-share]");
+        if (sh) sh.addEventListener("click", () => navigator.share({ text }).catch(() => {}));
       });
     });
   }
@@ -1244,8 +1310,10 @@
       </div>`;
     try {
       const d = await api("/contacts?q=__none__");
+      if (!$("#auto-save")) return; // left the screen
       $("#auto-save").checked = d.autoSave;
     } catch { /* ignore */ }
+    if (!$("#auto-save")) return;
     $("#auto-save").addEventListener("change", (e) => api("/contacts/settings", { body: { autoSave: e.target.checked } }).catch(() => toast("לא נשמר")));
     main.querySelectorAll("[data-file]").forEach((inp) => inp.addEventListener("change", async () => {
       const f = inp.files[0]; if (!f) return;
@@ -1293,6 +1361,7 @@
   // ── New chat ───────────────────────────────────────────────────────────────
   async function renderNew(params) {
     const tpls = await loadTemplates(true).catch(() => []);
+    if (parseRoute().name !== "new") return; // user moved on while loading
     main.innerHTML = `
       <header class="topbar">
         <a class="icon-btn" href="#/" aria-label="חזרה לצ'אטים">${I.back}</a>
@@ -1336,7 +1405,7 @@
           template: t.name, language: t.language, values: picker.values(),
         } });
         await loadConvs(true);
-        go("#/chat/" + r.phone);
+        location.replace("#/chat/" + r.phone);
       } catch (ex) {
         btn.disabled = false;
         toast(ex.message === "bad_phone" ? "מספר הטלפון לא תקין" : ex.message === "missing_value" ? "חסר ערך באחד השדות" : "לא נשלח: " + ((ex.data && ex.data.detail) || "שגיאה"));
@@ -1347,7 +1416,10 @@
   // ── Boot & polling ─────────────────────────────────────────────────────────
   async function boot() {
     try { state.me = await api("/me"); }
-    catch { if (!state.me) renderLogin(); return; }
+    catch (e) {
+      if (e.status === 401) { renderLogin(); return; }
+      renderOffline(); return;
+    }
     if (parseRoute().name === "join") history.replaceState(null, "", location.pathname + "#/");
     side.innerHTML = "";
     await loadConvs(true);
@@ -1364,7 +1436,17 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js", { scope: "/app/" }).catch(() => {});
+    navigator.serviceWorker.register("sw.js", { scope: "/app/" }).then((reg) => {
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    // A new version took over: reload when it's safe (nothing typed, no sheet open).
+    let hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController) { hadController = true; return; }
+      const typing = $("#composer-text") && $("#composer-text").value.trim();
+      if (!typing && !openSheets.length) location.reload();
+      else state.pendingReload = true;
+    });
     navigator.serviceWorker.addEventListener("message", (e) => {
       if (e.data && e.data.type === "open" && e.data.url) location.href = e.data.url;
     });
