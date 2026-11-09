@@ -487,14 +487,11 @@ function logEscalation(customerName, phoneNumber, question) {
   fs.writeFileSync(ESC_FILE, JSON.stringify(escalations, null, 2));
 }
 
-// Answers to customers now happen only in the team app. If Dor writes to
-// Lia's number from his private WhatsApp, point him there (at most once a day).
-let lastManagerRedirectAt = 0;
-async function handleManagerMessage() {
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  if (Date.now() - lastManagerRedirectAt < DAY_MS) return;
-  lastManagerRedirectAt = Date.now();
-  await sendWhatsAppMessage(MANAGER_PHONE, `היי דור 👋 עונים ללקוחות עכשיו מהאפליקציה:\n${APP_URL}/app/`);
+// Answers to customers happen only in the team app. A message from Dor to
+// Lia's number (e.g. replying "בוקר טוב" to the morning template, which keeps
+// the 24h window open for his alerts) gets no reply — just logged.
+function handleManagerMessage() {
+  console.log("👤 Message from manager (no reply — the team answers from the app)");
 }
 
 // Non-text messages (image, voice, file, location...) Lia can't read. Record
@@ -686,7 +683,7 @@ app.post("/webhook", async (req, res) => {
     const customerName = contact.profile?.name || phoneNumber;
 
     if (phoneNumber === MANAGER_PHONE) {
-      await handleManagerMessage();
+      handleManagerMessage();
       return;
     }
 
@@ -1364,6 +1361,15 @@ mountTeamApp(app, {
   sendWhatsAppMessage, sendWhatsAppTemplate,
 });
 
+// Morning template to Dor: remember when it last went out (survives redeploys).
+const PING_FILE = path.join(DATA_DIR, "manager_ping.json");
+const { shouldSendStartupPing, recordPing } = require("./lib/managerPing");
+async function sendManagerPing() {
+  const r = await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+  if (r.ok) recordPing(PING_FILE);
+  return r;
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 ${KB.business.name} agent running on port ${PORT}`);
@@ -1415,10 +1421,13 @@ app.listen(PORT, async () => {
 
   // Send the morning template to Dor daily at 07:30 Israel time (UTC+3 summer / UTC+2 winter).
   // This opens the 24h WhatsApp messaging window so all manager alerts arrive as plain text.
-  // Send immediately on startup to reopen the 24h window after any redeploy.
-  sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping")
-    .then(() => console.log("🌅 Startup ping sent to manager"))
-    .catch((e) => console.error("Startup ping failed:", e.message));
+  // On startup, only send it if the last one went out more than 20h ago — so a
+  // redeploy doesn't spam Dor with another "בוקר טוב".
+  if (shouldSendStartupPing(PING_FILE)) {
+    sendManagerPing().then(() => console.log("🌅 Startup ping sent to manager"));
+  } else {
+    console.log("🌅 Startup ping skipped (sent in the last 20h)");
+  }
 
   function scheduleMorningPing() {
     const now = new Date();
@@ -1429,10 +1438,10 @@ app.listen(PORT, async () => {
     if (nextPing <= israelNow) nextPing.setUTCDate(nextPing.getUTCDate() + 1);
     const msUntilPing = nextPing.getTime() - israelNow.getTime();
     setTimeout(async () => {
-      await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+      await sendManagerPing();
       console.log("🌅 Morning ping sent to manager");
       setInterval(async () => {
-        await sendWhatsAppTemplate(MANAGER_PHONE, "urban_morning_ping");
+        await sendManagerPing();
         console.log("🌅 Morning ping sent to manager");
       }, 24 * 60 * 60 * 1000);
     }, msUntilPing);
