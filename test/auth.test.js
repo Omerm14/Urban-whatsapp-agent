@@ -30,16 +30,27 @@ test("PINs are hashed, verified, and lock after repeated failures", () => {
   assert.strictEqual(team.verifyPin(dor.id, "482193").error, "locked", "correct PIN refused while locked");
 });
 
-test("owner code is single-use and limited", () => {
+test("owner code: resend keeps the same code, single use, limited attempts", () => {
   const team = tmpTeam();
   const code = team.createOtp();
   assert.match(code, /^\d{6}$/);
-  assert.strictEqual(team.checkOtp("999999" === code ? "111111" : "999999"), false);
-  assert.strictEqual(team.checkOtp(code), true);
-  assert.strictEqual(team.checkOtp(code), false, "second use rejected");
+  assert.strictEqual(team.createOtp(), code, "send again re-sends the same code");
+  const wrong = code === "999999" ? "111111" : "999999";
+  assert.deepStrictEqual(team.checkOtp(wrong), { error: "wrong_code", left: 4 });
+  assert.deepStrictEqual(team.checkOtp(` ${code.slice(0, 3)} ${code.slice(3)} `), { ok: true }, "spaces tolerated");
+  assert.strictEqual(team.checkOtp(code).error, "no_code", "second use rejected");
   const c2 = team.createOtp();
   for (let i = 0; i < 5; i++) team.checkOtp("abcdef");
-  assert.strictEqual(team.checkOtp(c2), false, "locked after 5 bad attempts");
+  assert.strictEqual(team.checkOtp(c2).error, "too_many");
+  assert.notStrictEqual(team.createOtp(), undefined, "a fresh code can be requested after lockout");
+});
+
+test("Arabic-Indic digits are accepted for PINs and codes", () => {
+  const { normalizeDigits } = require("../lib/team");
+  assert.strictEqual(normalizeDigits("٠٥٥٧٦٨"), "055768");
+  const team = tmpTeam();
+  const m = team.addMember("שני", "055768");
+  assert.ok(team.verifyPin(m.id, "٠٥٥٧٦٨").member);
 });
 
 test("invites are single use; admin can't be removed; names unique", () => {
