@@ -785,27 +785,79 @@
   }
 
   // ── Sheets ─────────────────────────────────────────────────────────────────
+  // Bottom sheets. Close by: ✕ button, tapping the dimmed backdrop, swiping the
+  // sheet down, Escape, or the phone's Back (Android) / swipe-back (iOS) —
+  // each sheet pushes a history entry so Back closes it instead of the app.
+  const openSheets = [];
+  let ignorePops = 0; // our own history.back() calls when a sheet closes
   function openSheet(title, html, onMount) {
     const back = document.createElement("div");
     back.className = "sheet-back";
-    back.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="grab"></div><h2>${esc(title)}</h2>${html}</div>`;
-    const close = () => { back.remove(); document.removeEventListener("keydown", onKey); };
+    back.innerHTML = `
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="sheet-head"><div class="grab" aria-hidden="true"></div>
+          <div class="sheet-title"><h2>${esc(title)}</h2><button type="button" class="icon-btn" data-close aria-label="סגירה">${I.x}</button></div>
+        </div>
+        <div class="sheet-body">${html}</div>
+      </div>`;
+    const sheet = back.querySelector(".sheet");
+    let closed = false;
+    const entry = { close: () => doClose(false) };
+    function doClose(fromHistory) {
+      if (closed) return;
+      closed = true;
+      back.remove();
+      document.removeEventListener("keydown", onKey);
+      const i = openSheets.indexOf(entry);
+      if (i !== -1) openSheets.splice(i, 1);
+      if (!fromHistory && history.state && history.state.sheet) { ignorePops++; history.back(); }
+    }
+    entry.fromHistory = () => doClose(true);
+    const close = () => doClose(false);
     const onKey = (e) => { if (e.key === "Escape") close(); };
-    back.addEventListener("click", (e) => { if (e.target === back || e.target.closest("[data-close]")) close(); });
+    back.addEventListener("click", (e) => {
+      const link = e.target.closest("a[href^='#']");
+      if (link) { doClose(true); return; } // navigating: let the link change the route
+      if (e.target === back || e.target.closest("[data-close]")) close();
+    });
+    // Swipe down on the header to dismiss.
+    const head = back.querySelector(".sheet-head");
+    let startY = null;
+    head.addEventListener("touchstart", (e) => { startY = e.touches[0].clientY; }, { passive: true });
+    head.addEventListener("touchmove", (e) => {
+      if (startY === null) return;
+      const dy = Math.max(0, e.touches[0].clientY - startY);
+      sheet.style.transform = `translateY(${dy}px)`;
+    }, { passive: true });
+    head.addEventListener("touchend", (e) => {
+      const dy = startY === null ? 0 : e.changedTouches[0].clientY - startY;
+      startY = null;
+      if (dy > 80) close(); else sheet.style.transform = "";
+    });
     document.addEventListener("keydown", onKey);
     document.body.appendChild(back);
+    openSheets.push(entry);
+    history.pushState({ sheet: true }, "");
     if (onMount) onMount(back, close);
-    const f = back.querySelector("input, button, textarea, select");
-    if (f) f.focus();
+    const f = back.querySelector(".sheet-body input:not([type=radio]):not([type=checkbox]), .sheet-body textarea");
+    if (f && matchMedia("(pointer: fine)").matches) f.focus(); // don't pop the keyboard on phones
     return close;
   }
+  window.addEventListener("popstate", () => {
+    if (ignorePops > 0) { ignorePops--; return; }
+    const top = openSheets[openSheets.length - 1];
+    if (top) top.fromHistory();
+  });
+  function closeAllSheets() { while (openSheets.length) openSheets[openSheets.length - 1].close(); }
 
   // Templates come live from Meta: only APPROVED ones, with their real text.
   async function loadTemplates(refresh) {
     if (!state.templates || refresh) {
       const d = await api("/templates" + (refresh ? "?refresh=1" : ""));
       state.templates = d.templates || [];
+      state.templatesOthers = d.others || [];
       state.templatesError = d.error || null;
+      state.templatesDetail = d.detail || null;
     }
     return state.templates;
   }
@@ -814,11 +866,23 @@
     const map = new Map(t.params.map((p, i) => [p.key, values[i] || ""]));
     return (t.header ? t.header + "\n" : "") + t.text.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => map.get(k) || `[${k === "1" ? "שם" : k}]`);
   }
+  function tplOthers() {
+    const o = state.templatesOthers || [];
+    if (!o.length) return "";
+    return `<div class="section-title" style="padding:10px 0 4px">לא זמינות לשליחה</div>` + o.map((t) => `
+      <div class="tpl-opt" aria-disabled="true" style="opacity:.6"><span class="tt"><span class="t1">${esc(t.name)}</span><span class="t2">${esc(t.status)}${t.reason ? " · " + esc(t.reason) : ""}</span></span></div>`).join("");
+  }
+  const tplOthersWrap = (html) => html + tplOthers();
   function tplEmpty() {
-    return `<div class="info">${I.clock}<span>${state.templatesError === "meta_error" || state.templatesError === "no_waba"
-      ? "לא הצלחנו לקרוא את התבניות מ-Meta. בדקו שהטוקן בתוקף."
-      : "עדיין אין תבניות מאושרות. יוצרים ב-WhatsApp Manager ← Message templates, ותבנית מופיעה כאן ברגע ש-Meta מאשרת אותה."}</span></div>
-      <button type="button" class="btn ghost" data-tpl-refresh>רענון</button>`;
+    const err = state.templatesError;
+    const msg = err === "no_waba"
+      ? "לא מצאנו את חשבון ה-WhatsApp Business. הוסיפו ב-Railway את WHATSAPP_BUSINESS_ACCOUNT_ID (WhatsApp Manager ← Business account info / API Setup)."
+      : err === "meta_error"
+        ? "Meta החזירה שגיאה בקריאת התבניות. בדקו שהטוקן בתוקף ושיש לו הרשאת whatsapp_business_management."
+        : "עדיין אין תבניות מאושרות. יוצרים ב-WhatsApp Manager ← Message templates, ותבנית מופיעה כאן ברגע ש-Meta מאשרת אותה.";
+    const detail = err && state.templatesDetail ? `<span class="err-detail" dir="ltr">${esc(state.templatesDetail)}</span>` : "";
+    return `<div class="info">${I.clock}<span>${msg}${detail}</span></div>${tplOthers()}
+      <button type="button" class="btn ghost" data-tpl-refresh style="margin-top:8px">רענון</button>`;
   }
   // Template picker + variable fields + live preview, used by the chat sheet and the new-chat page.
   function tplPicker(root, tpls, getFirstName) {
@@ -826,9 +890,9 @@
     const fields = root.querySelector("[data-tpl-fields]");
     const preview = root.querySelector("[data-tpl-preview]");
     if (!tpls.length) { list.innerHTML = tplEmpty(); fields.innerHTML = ""; preview.textContent = ""; return { selected: () => null, values: () => [] }; }
-    list.innerHTML = tpls.map((t, i) => `
+    list.innerHTML = tplOthersWrap(tpls.map((t, i) => `
       <label class="tpl-opt"><span class="tt"><span class="t1">${esc(t.label)}${tpls.some((x, j) => j !== i && x.name === t.name) ? ` · ${esc(t.language)}` : ""}</span><span class="t2">${esc(t.text)}</span></span>
-      <input type="radio" name="tpl" value="${esc(tplKey(t))}" ${i === 0 ? "checked" : ""}></label>`).join("");
+      <input type="radio" name="tpl" value="${esc(tplKey(t))}" ${i === 0 ? "checked" : ""}></label>`).join(""));
     const selected = () => tpls.find((t) => tplKey(t) === (list.querySelector('input[name="tpl"]:checked') || {}).value) || null;
     const values = () => Array.from(fields.querySelectorAll("[data-param]")).map((x) => x.value.trim());
     const renderFields = () => {
@@ -905,7 +969,7 @@
     openSheet(me.name, `
       <div class="form" style="gap:10px">
         ${pushHtml}
-        ${me.role === "admin" ? `<button class="btn ghost big" data-team>ניהול צוות · הוספת מנהל</button>` : ""}
+        ${me.role === "admin" ? `<button class="btn ghost big" data-team>ניהול צוות · הוספת מנהל</button><button class="btn ghost big" data-diag>בדיקת חיבור ל-Meta</button>` : ""}
         ${isStandalone() ? "" : `<button class="btn ghost big" data-install>התקנת האפליקציה בטלפון</button>`}
         <a class="btn ghost big" href="#/contacts" data-close>אנשי קשר</a>
         <a class="btn ghost big" href="#/import" data-close>ייבוא אנשי קשר</a>
@@ -919,6 +983,8 @@
           else { await enablePush(); toast("ההתראות הופעלו"); close(); }
         } catch (ex) { toast(ex.message === "denied" ? "ההרשאה להתראות נחסמה בהגדרות הטלפון" : "לא הצלחנו להפעיל התראות"); }
       });
+      const db = root.querySelector("[data-diag]");
+      if (db) db.addEventListener("click", () => { close(); openDiagnostics(); });
       const tb = root.querySelector("[data-team]");
       if (tb) tb.addEventListener("click", () => { close(); openTeamSheet(); });
       const ib = root.querySelector("[data-install]");
@@ -966,6 +1032,29 @@
         });
       });
     });
+  }
+
+  async function openDiagnostics() {
+    const closeLoading = openSheet("בדיקת חיבור ל-Meta", `<div class="form"><div class="info">בודק…</div></div>`);
+    let d;
+    try { d = await api("/diagnostics"); } catch { closeLoading(); toast("הבדיקה נכשלה"); return; }
+    closeLoading();
+    const row = (ok, title, text, detail) => `
+      <div class="diag-row"><span class="diag-dot ${ok ? "ok" : "bad"}" aria-hidden="true"></span>
+      <span class="tt"><span class="t1">${title} · ${ok ? "תקין" : "בעיה"}</span><span class="t2">${text || ""}</span>${detail ? `<span class="err-detail" dir="ltr">${esc(detail)}</span>` : ""}</span></div>`;
+    const t = d.token || {};
+    const tokenText = t.ok ? (t.neverExpires ? "טוקן קבוע — לא פג" : t.expiresAt ? `פג ב-${esc(new Date(t.expiresAt).toLocaleString("he-IL"))}` : "") : "הטוקן לא תקין או שפג — חדשו אותו ב-Railway";
+    const scopesOk = (t.scopes || []).includes("whatsapp_business_management");
+    const tp = d.templates;
+    openSheet("בדיקת חיבור ל-Meta", `
+      <div class="form" style="gap:2px">
+        ${row(t.ok, "טוקן", tokenText, t.detail)}
+        ${t.ok ? row(scopesOk, "הרשאת תבניות", scopesOk ? "whatsapp_business_management" : "לטוקן חסרה הרשאת whatsapp_business_management") : ""}
+        ${row(d.phone && d.phone.ok, "מספר", d.phone && d.phone.ok ? `${esc(d.phone.number || "")} · ${esc(d.phone.name || "")}` : "", d.phone && d.phone.detail)}
+        ${row(d.waba && d.waba.ok, "חשבון WhatsApp Business", d.waba && d.waba.ok ? `${esc(d.waba.id)}${d.waba.fromEnv ? " (מ-Railway)" : " (זוהה אוטומטית)"}` : "הוסיפו ב-Railway את WHATSAPP_BUSINESS_ACCOUNT_ID", d.waba && d.waba.detail)}
+        ${tp ? row(tp.ok, "תבניות", tp.ok ? `${tp.approved} מאושרות${tp.others && tp.others.length ? ` · ${tp.others.length} אחרות (${esc(tp.others.map((o) => o.name + ": " + o.status).join(", "))})` : ""}` : "", tp.detail) : ""}
+        ${row(d.push && d.push.ok, "התראות Push", d.push && d.push.ok ? (d.push.subscribed ? "מוגדר, והטלפון של המנהל רשום" : "מוגדר — הפעילו התראות מה-⋮") : "חסרים מפתחות VAPID ב-Railway")}
+      </div>`);
   }
 
   function openChangePin() {

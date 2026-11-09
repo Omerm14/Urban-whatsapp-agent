@@ -28,3 +28,34 @@ test("templates the app can't fill are skipped", () => {
   const withHeader = toAppTemplate(meta({ components: [{ type: "HEADER", format: "TEXT", text: "אורבן" }, { type: "BODY", text: "שלום" }] }));
   assert.strictEqual(renderText(withHeader, []), "אורבן\nשלום");
 });
+
+test("list: approved selectable, pending shown separately, WABA via fallback, real error surfaced", async () => {
+  const axios = require("axios");
+  const orig = axios.get;
+  const { TemplateService } = require("../lib/templates");
+  try {
+    delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+    axios.get = async (url) => {
+      if (url.includes("debug_token")) return { data: { data: { granular_scopes: [] } } };
+      if (url.includes("/me/businesses")) return { data: { data: [{ owned_whatsapp_business_accounts: { data: [{ id: "777" }] } }] } };
+      if (url.includes("/777/message_templates")) return { data: { data: [
+        meta(),
+        meta({ name: "urban_new_message", status: "PENDING" }),
+        meta({ name: "urban_morning_ping" }),
+      ] } };
+      throw new Error("unexpected " + url);
+    };
+    const svc = new TemplateService();
+    const l = await svc.list();
+    assert.deepStrictEqual(l.templates.map(t => t.name), ["urban_open_chat"]);
+    assert.deepStrictEqual(l.others.map(t => [t.name, t.status]), [["urban_new_message", "ממתינה לאישור"]]);
+    assert.strictEqual(await svc.find("urban_new_message"), null, "pending can't be sent");
+
+    axios.get = async () => { const e = new Error("x"); e.response = { status: 400, data: { error: { message: "Missing permissions", code: 10 } } }; throw e; };
+    const bad = await new TemplateService().list();
+    assert.strictEqual(bad.error, "no_waba");
+    assert.match(bad.detail, /Missing permissions \(code 10\)/);
+  } finally {
+    axios.get = orig;
+  }
+});
