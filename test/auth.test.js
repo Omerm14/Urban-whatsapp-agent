@@ -97,3 +97,12 @@ test("several admins: owner fixed, others promotable/removable; admin invites", 
   assert.strictEqual(team.useInvite(token).role, "admin");
   assert.strictEqual(team.remove(omer.id), true, "other admins can be removed");
 });
+
+test("Omer is a system admin without any environment variable", () => {
+  delete process.env.ADMIN_PHONES;
+  const { adminPhones } = require("../lib/api");
+  assert.ok(adminPhones().includes("972505646450"));
+  process.env.ADMIN_PHONES = "054-111-2222, 0505646450";
+  assert.deepStrictEqual(adminPhones().sort(), ["972505646450", "972541112222"]);
+  delete process.env.ADMIN_PHONES;
+});

@@ -85,7 +85,7 @@ Set in Railway → Variables (never commit to git):
 | `APP_SECRET` | Optional — signs team-app session cookies. If unset, a random key is generated once and kept in `DATA_DIR/app_secret` |
 | `LEGACY_DASHBOARD` | Set to `1` to re-enable the old `/conversations?token=` dashboard (off by default; `/conversations` redirects to `/app/`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys. Generate once: `npx web-push generate-vapid-keys`. If unset, push is disabled |
-| `ADMIN_PHONES` | System admins (comma-separated phones, e.g. `0541234567`). They sign in from the login screen → "כניסת מנהל מערכת" with a WhatsApp code to their own phone — no invite needed |
+| `ADMIN_PHONES` | Optional — extra system admins (comma-separated phones). Omer (050-5646450) is a fixed system admin in code (`SYSTEM_ADMIN_PHONES` in `lib/api.js`). System admins sign in from the login screen → "כניסת מנהל מערכת" with a WhatsApp code to their own phone — no invite needed |
 | `PUSH_OWNER` | Optional, legacy — a member name that always gets push. Normally set per member in the app (ניהול צוות → התראות) |
 | `PORT` | `8080` (Railway default) |
 
