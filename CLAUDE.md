@@ -22,7 +22,7 @@ AI-powered WhatsApp customer service agent for **אורבן בייקרי** (Urba
 
 1. Customer sends a WhatsApp message to the business number
 2. Meta forwards it to the webhook (`POST /webhook`)
-3. If the team holds the chat (`humanMode`) → Lia stays silent; Dor gets a push
+3. If the team holds the chat (`humanMode`) → Lia stays silent; the team gets a push
 4. Otherwise → message goes to Claude with conversation history + FAQ knowledge base
 5. Claude's reply may carry a control tag (parsed in `lib/replyTags.js`):
    - plain text → sent to the customer
@@ -49,7 +49,7 @@ Team app (/app, PWA) ⇄ /api (lib/api.js) → Meta API (sent from Lia's number)
 | `lib/team.js` | Team members (`team.json`): 6-digit PINs (scrypt), admin setup via WhatsApp code to `MANAGER_PHONE`, one-time invite links |
 | `lib/auth.js` | Signed session cookie (member id) + middleware |
 | `lib/contacts.js` | Phone book (`contacts.json`), vCard/CSV import, phone normalization |
-| `lib/push.js` | Web Push to Dor's phone (`push.json`, VAPID) |
+| `lib/push.js` | Web Push to the team's phones (`push.json`, VAPID) — every member switched on under ⋮ → ניהול צוות → "התראות" (admin on by default) |
 | `lib/templates.js` | Approved message templates, read live from Meta |
 | `lib/replyTags.js` | Parses `[HANDOFF]` / `[ESCALATE]` |
 | `lib/media.js` | Send photos/videos/voice/files (upload to Meta), serve inbound/outbound media via `/api/media/:id` with a cache in `DATA_DIR/media` |
@@ -85,7 +85,7 @@ Set in Railway → Variables (never commit to git):
 | `APP_SECRET` | Optional — signs team-app session cookies. If unset, a random key is generated once and kept in `DATA_DIR/app_secret` |
 | `LEGACY_DASHBOARD` | Set to `1` to re-enable the old `/conversations?token=` dashboard (off by default; `/conversations` redirects to `/app/`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys. Generate once: `npx web-push generate-vapid-keys`. If unset, push is disabled |
-| `PUSH_OWNER` | Optional — name of the team member who gets push notifications (default: the team admin) |
+| `PUSH_OWNER` | Optional, legacy — a member name that always gets push. Normally set per member in the app (ניהול צוות → התראות) |
 | `PORT` | `8080` (Railway default) |
 
 > **PII note**: `chat-history/*.zip` are real exported WhatsApp chats used once to
