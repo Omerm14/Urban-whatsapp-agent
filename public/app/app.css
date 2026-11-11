@@ -318,3 +318,6 @@ mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
 .notify-switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-inline-start: auto; }
 .notify-switch input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
 .team-row .tn { flex: 1; min-width: 0; }
+
+.team-row { flex-wrap: wrap; row-gap: 4px; }
+.row-actions { display: flex; gap: 4px; }

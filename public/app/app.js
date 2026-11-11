@@ -230,7 +230,9 @@
     if (!chosen) {
       loginShell("ליה · אורבן בייקרי", "מי נכנס?", `
         <div class="who-list">${st.members.map((m) => `<button class="btn ghost big" data-member="${esc(m.id)}">${esc(m.name)}</button>`).join("")}</div>
-        <p class="hint">עוד לא ברשימה? בקשו מדור קישור הזמנה.</p>`);
+        <p class="hint">עוד לא ברשימה? בקשו מדור קישור הזמנה.</p>
+        <button class="link" id="admin-login">כניסת מנהל מערכת</button>`);
+      $("#admin-login").addEventListener("click", renderAdminLogin);
       main.querySelectorAll("[data-member]").forEach((b) => b.addEventListener("click", () => { LS.set("lia_member", b.dataset.member); renderLogin(); }));
       return;
     }
@@ -240,6 +242,7 @@
         <button class="btn big" type="submit">כניסה</button>
         <div class="err" id="login-err" role="alert"></div>
         <div class="links"><button type="button" class="link" data-switch>זה לא אני</button><button type="button" class="link" data-forgot>שכחתי קוד</button></div>
+        ${chosen.role === "admin" && !chosen.owner ? `<button type="button" class="link" id="admin-login">כניסת מנהל מערכת בקוד לוואטסאפ</button>` : ""}
       </form>`);
     const pin = $("#pin");
     pin.focus();
@@ -255,9 +258,55 @@
     $("#login-form").addEventListener("submit", (e) => { e.preventDefault(); submit(); });
     pin.addEventListener("input", () => { if (/^\d{6}$/.test(pin.value)) submit(); });
     main.querySelector("[data-switch]").addEventListener("click", () => { LS.set("lia_member", ""); renderLogin(); });
+    const al = $("#admin-login"); if (al) al.addEventListener("click", renderAdminLogin);
     main.querySelector("[data-forgot]").addEventListener("click", () => {
-      if (chosen.role === "admin") renderOwnerSetup(false);
-      else toast("בקשו מדור קישור הזמנה חדש");
+      if (chosen.owner) renderOwnerSetup(false);
+      else if (chosen.role === "admin") renderAdminLogin();
+      else toast("בקשו ממנהל להסיר אתכם ולשלוח קישור הזמנה חדש");
+    });
+  }
+
+  // System admin (phone in ADMIN_PHONES): code to their own WhatsApp → name + PIN.
+  function renderAdminLogin() {
+    loginShell("כניסת מנהל מערכת", "קוד אימות יישלח לוואטסאפ שלכם", `
+      <form id="adm-form">
+        <label class="lbl" for="adm-phone">מספר הטלפון שלכם</label>
+        <input id="adm-phone" class="name-input" type="tel" dir="ltr" placeholder="05X-XXX-XXXX" autocomplete="tel" required>
+        <button class="btn big" type="button" id="adm-send">שליחת קוד לוואטסאפ</button>
+        <div id="adm-step" hidden>
+          <p class="hint" id="adm-sent"></p>
+          <label class="lbl" for="adm-otp">קוד מהוואטסאפ</label>
+          <input id="adm-otp" class="pin" dir="ltr" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••">
+          <label class="lbl" for="adm-name">השם שלכם (בכניסה ראשונה)</label>
+          <input id="adm-name" class="name-input" type="text" maxlength="40" autocomplete="name">
+          <label class="lbl" for="adm-pin">בחרו קוד כניסה (6 ספרות)</label>
+          ${pinInput("adm-pin", "קוד כניסה", "new-password")}
+          <button class="btn big" type="submit">כניסה</button>
+        </div>
+        <div class="err" id="adm-err" role="alert"></div>
+        <div class="links"><button type="button" class="link" id="adm-back">חזרה</button></div>
+      </form>`);
+    const err = $("#adm-err");
+    $("#adm-back").addEventListener("click", renderLogin);
+    $("#adm-send").addEventListener("click", async (e) => {
+      err.textContent = ""; e.target.disabled = true;
+      try {
+        const r = await api("/team/admin-code", { body: { phone: $("#adm-phone").value } });
+        $("#adm-step").hidden = false;
+        $("#adm-sent").innerHTML = `אם המספר מורשה, נשלח קוד לוואטסאפ <bdi dir="ltr">${esc(r.sentTo)}</bdi>. (צריך לכתוב קודם הודעה כלשהי למספר של ליה, כדי ש-WhatsApp יאפשר לשלוח לכם.)`;
+        e.target.textContent = "שליחה חוזרת";
+        setTimeout(() => { e.target.disabled = false; }, 60000);
+      } catch (ex) { e.target.disabled = false; err.textContent = ex.message === "bad_phone" ? "מספר לא תקין" : ex.message === "wait" ? "חכו דקה לפני שליחה חוזרת" : "השליחה נכשלה"; }
+    });
+    $("#adm-form").addEventListener("submit", async (e) => {
+      e.preventDefault(); err.textContent = "";
+      try {
+        const me = await api("/team/admin-verify", { body: { phone: $("#adm-phone").value, code: $("#adm-otp").value, name: $("#adm-name").value, pin: $("#adm-pin").value } });
+        LS.set("lia_member", me.id);
+        renderInstall(me.name);
+      } catch (ex) {
+        err.textContent = { bad_pin: "קוד הכניסה צריך להיות 6 ספרות", bad_name: "בכניסה ראשונה צריך שם", name_taken: "השם תפוס — הוסיפו שם משפחה", expired: "הקוד פג — שליחה חוזרת", too_many: "יותר מדי ניסיונות — שליחה חוזרת" }[ex.message] || "הקוד שגוי";
+      }
     });
   }
 
@@ -1068,10 +1117,15 @@
     openSheet("ניהול צוות", `
       <div class="form" style="gap:10px">
         <div class="team-list">${members.map((m) => `
-          <div class="team-row"><span class="tn">${esc(m.name)}${m.role === "admin" ? ' <span class="tag">מנהל ראשי</span>' : ""}</span>
-          <label class="notify-switch"><input type="checkbox" role="switch" data-notify="${esc(m.id)}" ${m.notify ? "checked" : ""}> התראות</label>
-          ${m.role === "admin" ? "" : `<button class="link danger" data-remove="${esc(m.id)}" data-name="${esc(m.name)}">הסרה</button>`}</div>`).join("")}</div>
+          <div class="team-row">
+            <span class="tn">${esc(m.name)}${m.id === state.me.id ? " (את/ה)" : ""}${m.owner ? ' <span class="tag">מנהל ראשי</span>' : m.role === "admin" ? ' <span class="tag">מנהל מערכת</span>' : ""}</span>
+            <label class="notify-switch"><input type="checkbox" role="switch" data-notify="${esc(m.id)}" ${m.notify ? "checked" : ""}> התראות</label>
+            ${m.owner || m.id === state.me.id ? "" : `<span class="row-actions">
+              <button class="link" data-role="${esc(m.id)}" data-to="${m.role === "admin" ? "member" : "admin"}" data-name="${esc(m.name)}">${m.role === "admin" ? "הסרת ניהול" : "הפוך למנהל"}</button>
+              <button class="link danger" data-remove="${esc(m.id)}" data-name="${esc(m.name)}">הסרה</button></span>`}
+          </div>`).join("")}</div>
         <div class="hint" style="font-size:12.5px;color:var(--muted)">מי שמסומן ב"התראות" מקבל Push לטלפון על שיחה חדשה, העברה לצוות ותשובות בשיחות של הצוות. כל אחד מפעיל אצלו: ⋮ ← הפעלת התראות.</div>
+        <label class="notify-switch" style="margin:0"><input type="checkbox" id="invite-admin"> הקישור נותן הרשאות ניהול (מנהל מערכת)</label>
         <button class="btn big" data-invite>הוספת מנהל · יצירת קישור הזמנה</button>
         <div id="invite-box"></div>
       </div>`, (root, close) => {
@@ -1082,6 +1136,13 @@
           if (cb.dataset.notify === state.me.id) { state.me.canPush = cb.checked; if (cb.checked) ensurePush(); }
         } catch { cb.checked = !cb.checked; toast("לא נשמר, נסו שוב"); }
       }));
+      root.querySelectorAll("[data-role]").forEach((b) => b.addEventListener("click", async () => {
+        const toAdmin = b.dataset.to === "admin";
+        if (!confirm(toAdmin ? `לתת ל${b.dataset.name} הרשאות מנהל מערכת? יוכל/תוכל לנהל צוות, התראות והזמנות.` : `להסיר את הרשאות הניהול של ${b.dataset.name}?`)) return;
+        try { await api("/team/" + b.dataset.role, { method: "PATCH", body: { role: b.dataset.to } }); }
+        catch { toast("לא נשמר, נסו שוב"); return; }
+        close(); toast(toAdmin ? `${b.dataset.name} עכשיו מנהל מערכת` : "הרשאות הניהול הוסרו"); openTeamSheet();
+      }));
       root.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
         if (!confirm(`להסיר את ${b.dataset.name}? הגישה שלו/ה לאפליקציה תיחסם מיד.`)) return;
         try { await api("/team/" + b.dataset.remove, { method: "DELETE" }); }
@@ -1091,7 +1152,7 @@
       root.querySelector("[data-invite]").addEventListener("click", async (e) => {
         e.target.disabled = true;
         let inv;
-        try { inv = await api("/team/invite", { method: "POST", body: {} }); }
+        try { inv = await api("/team/invite", { method: "POST", body: { role: root.querySelector("#invite-admin").checked ? "admin" : "member" } }); }
         catch { e.target.disabled = false; toast("לא הצלחנו ליצור קישור, נסו שוב"); return; }
         const link = `${location.origin}/app/#/join/${inv.token}`;
         const text = `הוזמנת לאפליקציה של ליה — תיבת השיחות של אורבן בייקרי. פתחו את הקישור, בחרו שם וקוד, והתקינו בטלפון:\n${link}`;

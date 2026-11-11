@@ -46,7 +46,7 @@ Team app (/app, PWA) ⇄ /api (lib/api.js) → Meta API (sent from Lia's number)
 |------|------|
 | `index.js` | Webhook, Claude, follow-ups, legacy `/conversations` dashboard |
 | `lib/api.js` | `/api/*` for the team app + serves `public/app` |
-| `lib/team.js` | Team members (`team.json`): 6-digit PINs (scrypt), admin setup via WhatsApp code to `MANAGER_PHONE`, one-time invite links |
+| `lib/team.js` | Team members (`team.json`): 6-digit PINs (scrypt). Owner (Dor) set up via WhatsApp code to `MANAGER_PHONE`; several admins ("מנהל מערכת") via `ADMIN_PHONES`, admin invite links, or "הפוך למנהל"; one-time invite links (48h) |
 | `lib/auth.js` | Signed session cookie (member id) + middleware |
 | `lib/contacts.js` | Phone book (`contacts.json`), vCard/CSV import, phone normalization |
 | `lib/push.js` | Web Push to the team's phones (`push.json`, VAPID) — every member switched on under ⋮ → ניהול צוות → "התראות" (admin on by default) |
@@ -85,6 +85,7 @@ Set in Railway → Variables (never commit to git):
 | `APP_SECRET` | Optional — signs team-app session cookies. If unset, a random key is generated once and kept in `DATA_DIR/app_secret` |
 | `LEGACY_DASHBOARD` | Set to `1` to re-enable the old `/conversations?token=` dashboard (off by default; `/conversations` redirects to `/app/`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push keys. Generate once: `npx web-push generate-vapid-keys`. If unset, push is disabled |
+| `ADMIN_PHONES` | System admins (comma-separated phones, e.g. `0541234567`). They sign in from the login screen → "כניסת מנהל מערכת" with a WhatsApp code to their own phone — no invite needed |
 | `PUSH_OWNER` | Optional, legacy — a member name that always gets push. Normally set per member in the app (ניהול צוות → התראות) |
 | `PORT` | `8080` (Railway default) |
 

@@ -58,7 +58,7 @@ test("invites are single use; admin can't be removed; names unique", () => {
   const dor = team.addMember("דור", "111111", "admin");
   const { token } = team.createInvite(dor.id);
   assert.ok(team.findInvite(token));
-  assert.strictEqual(team.useInvite(token), true);
+  assert.ok(team.useInvite(token));
   assert.strictEqual(team.useInvite(token), false);
   assert.strictEqual(team.nameTaken(" דור "), true);
   const shani = team.addMember("שני", "222222");
@@ -80,4 +80,20 @@ test("requireTeam: valid cookie passes, removed member is cut off", () => {
   team.remove(shani.id);
   mw({ headers: { cookie } }, res, () => { status = "next"; });
   assert.strictEqual(status, 401);
+});
+
+test("several admins: owner fixed, others promotable/removable; admin invites", () => {
+  const team = tmpTeam();
+  const dor = team.addMember("דור", "111111", "admin");
+  const omer = team.addMember("עומר", "222222");
+  assert.strictEqual(team.owner().id, dor.id);
+  assert.ok(team.setRole(omer.id, "admin"));
+  assert.strictEqual(team.get(omer.id).role, "admin");
+  assert.strictEqual(team.members().find(m => m.id === omer.id).notify, true, "admins get push by default");
+  assert.strictEqual(team.setRole(dor.id, "member"), null, "owner can't be demoted");
+  assert.strictEqual(team.remove(dor.id), false, "owner can't be removed");
+  assert.strictEqual(team.owner().id, dor.id, "a second admin doesn't take over the owner");
+  const { token } = team.createInvite(dor.id, "admin");
+  assert.strictEqual(team.useInvite(token).role, "admin");
+  assert.strictEqual(team.remove(omer.id), true, "other admins can be removed");
 });
