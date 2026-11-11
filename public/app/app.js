@@ -1017,7 +1017,9 @@
     const me = state.me;
     const p = me.push || {};
     let pushHtml = "";
-    if (me.isPushOwner) {
+    if (!me.canPush) {
+      pushHtml = `<div class="info">התראות לטלפון כבויות בשבילך — בקשו מדור להפעיל לכם התראות ב"ניהול צוות".</div>`;
+    } else {
       if (!p.enabled) pushHtml = `<div class="info">התראות לטלפון עדיין לא הוגדרו בשרת (מפתחות VAPID).</div>`;
       else if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
         pushHtml = isIOS() && !isStandalone()
@@ -1067,10 +1069,19 @@
       <div class="form" style="gap:10px">
         <div class="team-list">${members.map((m) => `
           <div class="team-row"><span class="tn">${esc(m.name)}${m.role === "admin" ? ' <span class="tag">מנהל ראשי</span>' : ""}</span>
+          <label class="notify-switch"><input type="checkbox" role="switch" data-notify="${esc(m.id)}" ${m.notify ? "checked" : ""}> התראות</label>
           ${m.role === "admin" ? "" : `<button class="link danger" data-remove="${esc(m.id)}" data-name="${esc(m.name)}">הסרה</button>`}</div>`).join("")}</div>
+        <div class="hint" style="font-size:12.5px;color:var(--muted)">מי שמסומן ב"התראות" מקבל Push לטלפון על שיחה חדשה, העברה לצוות ותשובות בשיחות של הצוות. כל אחד מפעיל אצלו: ⋮ ← הפעלת התראות.</div>
         <button class="btn big" data-invite>הוספת מנהל · יצירת קישור הזמנה</button>
         <div id="invite-box"></div>
       </div>`, (root, close) => {
+      root.querySelectorAll("[data-notify]").forEach((cb) => cb.addEventListener("change", async () => {
+        try {
+          await api("/team/" + cb.dataset.notify, { method: "PATCH", body: { notify: cb.checked } });
+          toast(cb.checked ? "התראות הופעלו — שיפעילו אצלם בטלפון מה-⋮" : "התראות כובו");
+          if (cb.dataset.notify === state.me.id) { state.me.canPush = cb.checked; if (cb.checked) ensurePush(); }
+        } catch { cb.checked = !cb.checked; toast("לא נשמר, נסו שוב"); }
+      }));
       root.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
         if (!confirm(`להסיר את ${b.dataset.name}? הגישה שלו/ה לאפליקציה תיחסם מיד.`)) return;
         try { await api("/team/" + b.dataset.remove, { method: "DELETE" }); }
@@ -1121,10 +1132,16 @@
         ${row(d.phone && d.phone.ok, "מספר", d.phone && d.phone.ok ? `${esc(d.phone.number || "")} · ${esc(d.phone.name || "")}` : "", d.phone && d.phone.detail)}
         ${row(d.waba && d.waba.ok, "חשבון WhatsApp Business", d.waba && d.waba.ok ? `${esc(d.waba.id)}${d.waba.fromEnv ? " (מ-Railway)" : " (זוהה אוטומטית)"}` : "הוסיפו ב-Railway את WHATSAPP_BUSINESS_ACCOUNT_ID", d.waba && d.waba.detail)}
         ${tp ? row(tp.ok, "תבניות", tp.ok ? `${tp.approved} מאושרות${tp.others && tp.others.length ? ` · ${tp.others.length} אחרות (${esc(tp.others.map((o) => o.name + ": " + o.status).join(", "))})` : ""}` : "", tp.detail) : ""}
-        ${row(d.push && d.push.ok && d.push.devices > 0, "התראות Push", !(d.push && d.push.ok) ? "חסרים מפתחות VAPID ב-Railway"
-          : d.push.devices === 0 ? "אף טלפון לא רשום — באייפון: פותחים את ליה מהאייקון במסך הבית ← ⋮ ← הפעלת התראות"
-          : `${d.push.devices} מכשירים רשומים${d.push.last ? ` · אחרונה: ${esc(new Date(d.push.last.at).toLocaleString("he-IL"))} — ${d.push.last.sent ? "נשלחה" : "לא נשלחה"}` : ""}`,
-          d.push && d.push.last && d.push.last.errors && d.push.last.errors.length ? d.push.last.errors.join(" | ") : "")}
+        ${(() => {
+          const pu = d.push || {};
+          if (!pu.ok) return row(false, "התראות Push", "חסרים מפתחות VAPID ב-Railway");
+          const rec = pu.recipients || [];
+          const missing = rec.filter((r) => !r.devices).map((r) => r.name);
+          const text = (rec.length ? rec.map((r) => `${esc(r.name)}: ${r.devices ? r.devices + " מכשירים" : "לא רשום"}`).join(" · ") : "אף אחד לא מסומן לקבל התראות")
+            + (missing.length ? ` — ${esc(missing.join(", "))}: פותחים את ליה מהאייקון ← ⋮ ← הפעלת התראות` : "")
+            + (pu.last ? ` · אחרונה: ${esc(new Date(pu.last.at).toLocaleString("he-IL"))} — ${pu.last.sent ? `נשלחה ל-${pu.last.sent} מכשירים` : "לא נשלחה"}` : "");
+          return row(rec.length > 0 && !missing.length, "התראות Push", text, pu.last && pu.last.errors && pu.last.errors.length ? pu.last.errors.join(" | ") : "");
+        })()}
       </div>`);
   }
 
@@ -1172,7 +1189,7 @@
   // device, make sure the server has its current subscription (silently).
   async function ensurePush() {
     const p = state.me && state.me.push;
-    if (!p || !p.enabled || !state.me.isPushOwner) return;
+    if (!p || !p.enabled || !state.me.canPush) return;
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || typeof Notification === "undefined") return;
     if (Notification.permission !== "granted") return;
     try {

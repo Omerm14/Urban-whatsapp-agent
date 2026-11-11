@@ -94,10 +94,11 @@ const push = new PushService(DATA_DIR);
 const media = new MediaService(DATA_DIR);
 const team = new TeamStore(DATA_DIR);
 const templates = new TemplateService();
-// Push goes to PUSH_OWNER (by name) if set, otherwise to the team admin.
-push.resolveOwner = () => {
-  const byName = process.env.PUSH_OWNER && team.members().find(m => m.name === process.env.PUSH_OWNER);
-  return (byName || team.admin())?.id || null;
+// Push goes to every member switched on in "ניהול צוות" (admin by default),
+// plus PUSH_OWNER by name for backward compatibility.
+push.resolveRecipients = () => {
+  const ids = team.members().filter(m => m.notify || m.name === process.env.PUSH_OWNER).map(m => m.id);
+  return [...new Set(ids)];
 };
 const messageQueues = {}; // phone → { messages: [{text, name}], timer }
 
@@ -446,7 +447,7 @@ async function notifyDor({ text, title, body, phone, tag, whatsapp = true }) {
   if (whatsapp && MANAGER_PHONE) {
     await sendWhatsAppMessage(MANAGER_PHONE, `${text}\n${url}`);
   }
-  push.notifyOwner({ title, body, url: phone ? `/app/#/chat/${phone}` : "/app/", tag: tag || phone })
+  push.notifyTeam({ title, body, url: phone ? `/app/#/chat/${phone}` : "/app/", tag: tag || phone })
     .catch(e => console.error("push error:", e.message));
 }
 
@@ -518,7 +519,7 @@ async function recordNonTextMessage(phoneNumber, customerName, message) {
   conv.waitingForTeam = true;
   contacts.autoSaveFromWhatsApp(phoneNumber, customerName);
   saveConversations();
-  push.notifyOwner({ title: conv.name || phoneNumber, body: label, url: `/app/#/chat/${phoneNumber}`, tag: phoneNumber })
+  push.notifyTeam({ title: conv.name || phoneNumber, body: label, url: `/app/#/chat/${phoneNumber}`, tag: phoneNumber })
     .catch(e => console.error("push error:", e.message));
 }
 
