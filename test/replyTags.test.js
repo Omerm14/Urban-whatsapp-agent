@@ -3,7 +3,7 @@ const assert = require("node:assert");
 const { parseReply } = require("../lib/replyTags");
 
 test("plain answer", () => {
-  assert.deepStrictEqual(parseReply("פתוחים עד 19:00"), { escalate: false, handoff: null, text: "פתוחים עד 19:00" });
+  assert.deepStrictEqual(parseReply("פתוחים עד 19:00"), { escalate: false, end: false, handoff: null, text: "פתוחים עד 19:00" });
 });
 
 test("escalate sends nothing to the customer", () => {
@@ -22,4 +22,10 @@ test("handoff without summary", () => {
   const r = parseReply("מישהו מהצוות יחזור אלייך\n[HANDOFF]");
   assert.strictEqual(r.text, "מישהו מהצוות יחזור אלייך");
   assert.deepStrictEqual(r.handoff, { summary: "" });
+});
+
+test("[END] marks a sign-off and is stripped", () => {
+  const r = parseReply("שבת שלום! [END]");
+  assert.strictEqual(r.end, true);
+  assert.strictEqual(r.text, "שבת שלום!");
 });
