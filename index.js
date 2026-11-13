@@ -8,6 +8,7 @@ const { isDuplicate } = require("./lib/dedup");
 const { ContactStore } = require("./lib/contacts");
 const { PushService } = require("./lib/push");
 const { parseReply } = require("./lib/replyTags");
+const { isClosingMessage, shouldFollowUp, followUpText } = require("./lib/closing");
 const mountTeamApp = require("./lib/api");
 const { MediaService } = require("./lib/media");
 const { TeamStore } = require("./lib/team");
@@ -172,44 +173,14 @@ pruneOldConversations();
 
 let websiteContent = null;
 
+// One "anything else?" after 10 min of silence (at most once a day per
+// customer, only after a real answer — see lib/closing.js). If the customer
+// doesn't reply within 5 min, the conversation closes quietly (no goodbye).
+// A conversation idle 30 min with no follow-up also closes quietly.
 const FOLLOW_UP_AFTER_MS = 10 * 60 * 1000;
 const CLOSE_AFTER_MS = 5 * 60 * 1000;
+const QUIET_CLOSE_MS = 30 * 60 * 1000;
 
-async function generateFollowUpMessage(conv, type) {
-  const lastUserMsg = [...conv.messages].reverse().find(m => m.role === 'user');
-  const lastContent = lastUserMsg ? lastUserMsg.content : '';
-  const latinRatio = (lastContent.match(/[a-zA-Z]/g) || []).length / (lastContent.length || 1);
-  const isEnglish = latinRatio > 0.5;
-
-  let instruction;
-  if (type === "follow_up") {
-    instruction = isEnglish
-      ? "Do NOT introduce yourself or say your name. Do NOT say 'Is there anything else I can help you with?' — that sounds like a bot. Write one casual, human sentence checking in. Examples: 'Need anything else?' / 'All good? 😊' / 'Anything else on your mind?'"
-      : "אל תציגי את עצמך ואל תאמרי את שמך. אסור לכתוב 'יש עוד משהו שאוכל לעזור?' — זה נשמע כמו בוט. כתבי משפט אחד קצר וטבעי. לדוגמה: 'הכל טוב? 😊' / 'יש עוד שאלות?' / 'צריכים עוד משהו?'";
-  } else {
-    instruction = isEnglish
-      ? "Do NOT introduce yourself or say your name. Write one short goodbye wishing them a great day and that you look forward to seeing them. Keep it simple and genuine. Nothing else."
-      : "אל תציגי את עצמך ואל תאמרי את שמך. כתבי פרידה קצרה — ברכה ליום נהדר ושמחכים לראותם. פשוט ואמיתי. משפט אחד בלבד.";
-  }
-
-  try {
-    const res = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-6",
-        max_tokens: 80,
-        system: "You are Lia, a friendly human rep at Urban Bakery Tel Aviv. Write one message only — casual, warm, zero corporate language.",
-        messages: [{ role: "user", content: instruction }],
-      },
-      { headers: ANTHROPIC_HEADERS, timeout: 15000 }
-    );
-    return res.data.content[0].text.trim();
-  } catch {
-    return type === "follow_up"
-      ? (isEnglish ? "Is there anything else I can help with?" : "יש עוד שאלות?")
-      : (isEnglish ? "If you need anything, we're here!" : "אם יצטרך משהו, אנחנו כאן");
-  }
-}
 
 async function fetchWebsiteKB() {
   try {
@@ -264,6 +235,8 @@ function buildSystemPrompt() {
 • לא "מתי את צריכה את זה בשביל?" — אלא "לאיזה תאריך?"
 • לא "עם מי אני מדברת עם?" — אלא "עם מי אני מדברת?"
 ובלי "זה" מיותר כשאפשר לשאול ישר: "לכמה אנשים ולאיזה תאריך?".
+ברכות ופרידות — טבעיות ופשוטות, כמו שישראלים כותבים: "שבת שלום!", "שיהיה יום טוב", "בכיף ❤️", "נתראה!". בלי משחקי מילים מתורגמים ("יום מתוק", "שיהיה לכם טעים בחיים") ובלי לשון גבוהה ("לראותכם", "נשמח לראותכם") — אומרים "לראות אתכם".
+סיום שיחה: כשהלקוח רק מודה, נפרד, מברך או שולח אימוג'י (למשל "תודה", "שבת שלום ❤️", "סבבה", "👍") — עני במשפט קצר אחד בלבד (או רק אימוג'י), בלי שאלה ובלי "צריכים עוד משהו?", והוסיפי בסוף [END]. אם יש בהודעה גם שאלה או בקשה — עני עליה כרגיל, בלי [END].
 כשמדברים בשם העסק — "פתוחים", "מחכים" (לא "פתוחות"). מגדר: אל תניחי מגדר לפי שם. השתמשי תמיד בלשון רבים (לדוגמה: "בואו", "בחרו", "תכתבו") — אף פעם לא בצורה ניטרלית כמו "בחר/י" או "בוא/י". היוצא מן הכלל: אם הלקוח ציין את מגדרו בצורה מפורשת בשיחה.
 לא מזכירים שזה AI. אם שואלים *ישירות* אם את בוט או AI (למשל "את בוט?", "are you a bot?") — עני "אני ליה 😊 מה אפשר לעזור?". אם שואלים "את פה?" / "is anyone there?" — עני קצר וחם, כמו "כן! 😊 מה אפשר לעזור?" בלי להציג את עצמך. לא להשתמש במילים AI, בוט, chat assistant, מערכת.
 
@@ -278,7 +251,7 @@ function buildSystemPrompt() {
 ליה: "כן, תרשמי לנו בהערות"
 
 לקוח: "תודה רבה!"
-ליה: "בכיף! ❤️"
+ליה: "בכיף! ❤️ [END]"
 
 לקוח: "אתם כשרים?"
 ליה: "לא, אנחנו לא כשרים. אבל התפריט עשיר, רוב האנשים מוצאים המון דברים טובים"
@@ -305,7 +278,10 @@ Lia: "honestly no idea — depends on the day. mornings are usually calmer"
 ליה: "בשמחה! לכמה אנשים, לאיזה תאריך, ואיסוף מהמאפייה או משלוח?"
 
 לקוח: "תודה, היה מעולה כרגיל"
-ליה: "❤️"
+ליה: "❤️ [END]"
+
+לקוח: "שבת שלום ❤️"
+ליה: "שבת שלום! [END]"
 
 לקוח: "יש לכם היום קרואסון שוקולד?"
 ליה: "[ESCALATE]"
@@ -537,8 +513,12 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     const conv = ensureConversation(phoneNumber, customerName);
     conv.name = customerName;
     const wasClosed = conv.conversationClosed;
+    const closingMsg = isClosingMessage(customerMessage);
+    // "שבת שלום ❤️" / "תודה" after the conversation already ended: answer once
+    // briefly, keep it closed, and don't treat it as a new conversation.
+    const signOffAfterClose = wasClosed && closingMsg;
     conv.followUpSentAt = null;
-    conv.conversationClosed = false;
+    if (!signOffAfterClose) conv.conversationClosed = false;
     // Capture lastSeen before updating it — used below to detect a new session.
     const prevLastSeen = conv.lastSeen;
     conv.messages.push({ role: "user", sender: "user", content: customerMessage, timestamp: new Date().toISOString() });
@@ -550,14 +530,21 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     // Notify Dor on any new session: first ever message, returning after a 4h
     // gap, or reopening a conversation that had auto-closed.
     const SESSION_GAP_MS = 4 * 60 * 60 * 1000;
-    const isNewSession = wasClosed || !prevLastSeen ||
-      (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS);
+    const isNewSession = !signOffAfterClose && (wasClosed || !prevLastSeen ||
+      (Date.now() - new Date(prevLastSeen).getTime() > SESSION_GAP_MS));
     if (isNewSession) {
       conv.followUpAsked = false;
       await notifyDor({
         text: `💬 שיחה חדשה\n${displayName} · ${phoneNumber}\n"${customerMessage}"`,
         title: `💬 שיחה חדשה · ${displayName}`, body: customerMessage, phone: phoneNumber,
       });
+    }
+
+    // Lia already answered a sign-off in the last 10 min → don't ping-pong "❤️".
+    if (signOffAfterClose && !conv.humanMode && conv.lastSignOffReplyAt &&
+        Date.now() - new Date(conv.lastSignOffReplyAt).getTime() < 10 * 60 * 1000) {
+      saveConversations();
+      return;
     }
 
     // The team holds this chat — Lia stays silent. Push only (no WhatsApp).
@@ -604,7 +591,18 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
 
     if (reply.text) {
       const result = await sendWhatsAppMessage(phoneNumber, reply.text);
-      pushOutgoing(conv, { content: reply.text, sender: "lia", result });
+      const sent = pushOutgoing(conv, { content: reply.text, sender: "lia", result });
+      if (reply.end || closingMsg) sent.closing = true;
+    }
+
+    // The customer is wrapping up: close now — no follow-up, no goodbye later.
+    if (!reply.handoff && (reply.end || closingMsg)) {
+      conv.conversationClosed = true;
+      conv.lastSignOffReplyAt = new Date().toISOString();
+      saveConversations();
+      metrics.answered++;
+      console.log(`👋 Conversation ended by customer (${reply.end ? "[END]" : "sign-off"})`);
+      return;
     }
 
     if (reply.handoff) {
@@ -1397,34 +1395,31 @@ app.listen(PORT, async () => {
       if (conv.conversationClosed || !conv.lastSeen || conv.messages.length === 0) continue;
       const silenceMs = now - new Date(conv.lastSeen).getTime();
 
-      // humanMode is permanent — only released manually by Dor
+      // humanMode is permanent — only released manually by the team
       if (conv.humanMode) continue;
 
-      if (!conv.followUpSentAt && !conv.followUpAsked && silenceMs > FOLLOW_UP_AFTER_MS) {
-        const msg = await generateFollowUpMessage(conv, "follow_up");
-        pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
-        conv.followUpSentAt = new Date().toISOString();
-        conv.followUpAsked = true;
-        saveConversations();
-        console.log(`🔔 Follow-up sent to ${phone}`);
-      } else if (!conv.followUpSentAt && conv.followUpAsked && silenceMs > FOLLOW_UP_AFTER_MS) {
-        // Already asked "anything else?" once this session — don't nag again, just close warmly.
-        const msg = await generateFollowUpMessage(conv, "closing");
-        pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
-        conv.conversationClosed = true;
-        saveConversations();
-        clearPendingEscalation(phone);
-        console.log(`👋 Conversation closed for ${phone} (skipped repeat follow-up)`);
-      } else if (conv.followUpSentAt) {
-        const waitedMs = now - new Date(conv.followUpSentAt).getTime();
-        if (waitedMs > CLOSE_AFTER_MS) {
-          const msg = await generateFollowUpMessage(conv, "closing");
-          pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
+      // Follow-up already sent: if no reply within 5 min, close quietly.
+      if (conv.followUpSentAt) {
+        if (now - new Date(conv.followUpSentAt).getTime() > CLOSE_AFTER_MS) {
           conv.conversationClosed = true;
           saveConversations();
-          clearPendingEscalation(phone);
-          console.log(`👋 Conversation closed for ${phone}`);
+          console.log(`🤫 Conversation closed quietly for ${phone}`);
         }
+        continue;
+      }
+
+      if (shouldFollowUp(conv, now, FOLLOW_UP_AFTER_MS)) {
+        const msg = followUpText(conv);
+        pushOutgoing(conv, { content: msg, sender: "lia", result: await sendWhatsAppMessage(phone, msg) });
+        conv.followUpSentAt = new Date().toISOString();
+        conv.lastFollowUpAt = conv.followUpSentAt;
+        conv.followUpAsked = true;
+        conv.followUpCount = (conv.followUpCount || 0) + 1;
+        saveConversations();
+        console.log(`🔔 Follow-up sent to ${phone}`);
+      } else if (silenceMs > QUIET_CLOSE_MS) {
+        conv.conversationClosed = true;
+        saveConversations();
       }
     }
   }, 2 * 60 * 1000);

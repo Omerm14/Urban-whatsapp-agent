@@ -27,8 +27,10 @@ AI-powered WhatsApp customer service agent for **אורבן בייקרי** (Urba
 5. Claude's reply may carry a control tag (parsed in `lib/replyTags.js`):
    - plain text → sent to the customer
    - `[HANDOFF: summary]` → catering / events / collaboration (after Lia collects date & time, location, guest count), jobs, "talk to a human". Text sent, chat moves to the team (`humanMode` + `waitingForTeam`), Dor alerted
+   - `[END]` → the customer is wrapping up (thanks / goodbye / ❤️). Short reply, conversation closes — no follow-up, no goodbye later. `lib/closing.js` also detects sign-offs without the tag
    - `[ESCALATE]` → Lia doesn't know. Nothing sent; chat flagged "ליה מחכה לכם", Dor alerted. The answer typed in the app can be saved to the KB
-6. The team answers from the **team app** (`/app`) — all from Lia's number. Writing in a chat takes it over from Lia; "החזר לליה" gives it back
+6. Follow-up: one fixed "צריכים עוד משהו?" after 10 min of silence, only after a real answer (not after a question or a goodbye), at most once a day per customer. No reply in 5 min → closes quietly. There is no automatic goodbye. A sign-off after a closed conversation gets one short reply and doesn't count as a new conversation (no alert)
+7. The team answers from the **team app** (`/app`) — all from Lia's number. Writing in a chat takes it over from Lia; "החזר לליה" gives it back
 
 Lia never sends Dor's contact card or phone number anymore.
 

@@ -1203,6 +1203,9 @@
             + (pu.last ? ` · אחרונה: ${esc(new Date(pu.last.at).toLocaleString("he-IL"))} — ${pu.last.sent ? `נשלחה ל-${pu.last.sent} מכשירים` : "לא נשלחה"}` : "");
           return row(rec.length > 0 && !missing.length, "התראות Push", text, pu.last && pu.last.errors && pu.last.errors.length ? pu.last.errors.join(" | ") : "");
         })()}
+        ${d.morningPing ? row(!!d.morningPing.lastAt, "תבנית בוקר לדור", d.morningPing.lastAt
+          ? `נשלחה לאחרונה ${esc(new Date(d.morningPing.lastAt).toLocaleString("he-IL"))} — deploy לא שולח שוב אם נשלחה ב-20 השעות האחרונות`
+          : "עוד לא נרשמה שליחה (אם זה חוזר אחרי כל deploy — DATA_DIR לא על ה-volume)") : ""}
       </div>`);
   }
 
