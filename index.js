@@ -8,6 +8,7 @@ const { isDuplicate } = require("./lib/dedup");
 const { ContactStore } = require("./lib/contacts");
 const { PushService } = require("./lib/push");
 const { parseReply } = require("./lib/replyTags");
+const { describeInbound } = require("./lib/inbound");
 const { isClosingMessage, shouldFollowUp, followUpText } = require("./lib/closing");
 const mountTeamApp = require("./lib/api");
 const { MediaService } = require("./lib/media");
@@ -480,35 +481,112 @@ function handleManagerMessage() {
   console.log("👤 Message from manager (no reply — the team answers from the app)");
 }
 
-// Non-text messages (image, voice, file, location...) Lia can't read. Record
-// them so the team sees them, and flag the chat as waiting for the team.
-const MEDIA_LABELS = {
-  image: "📷 תמונה", audio: "🎤 הקלטה", voice: "🎤 הקלטה", video: "🎥 סרטון",
-  document: "📄 קובץ", sticker: "סטיקר", location: "📍 מיקום", contacts: "👤 איש קשר",
-};
-async function recordNonTextMessage(phoneNumber, customerName, message) {
-  const conv = ensureConversation(phoneNumber, customerName);
-  const part = message[message.type] || {};
-  const caption = part.caption;
-  const label = (MEDIA_LABELS[message.type] || "הודעה") + (caption ? `: ${caption}` : "");
-  const msg = { role: "user", sender: "user", content: label, media: message.type, timestamp: new Date().toISOString() };
-  if (part.id) { msg.mediaId = part.id; msg.mimeType = part.mime_type || null; msg.filename = part.filename || null; }
-  if (caption) msg.caption = caption;
-  if (message.type === "location") {
-    msg.location = { lat: part.latitude, lng: part.longitude, name: part.name || null };
+// Non-text messages (image, voice, file, location, reaction, unsupported…).
+// Lia never answers these. They're recorded for the team; media is saved right
+// away and forwarded to Dor's WhatsApp; reactions land on the message they're for.
+const FORWARD_MAX_BYTES = 16 * 1024 * 1024;
+const dorMediaAlertAt = {}; // phone -> ms of the last text alert (albums → one alert)
+
+function findMessageById(conv, id) {
+  if (!conv || !id) return null;
+  for (let i = conv.messages.length - 1; i >= 0; i--) {
+    const m = conv.messages[i];
+    if (m.wamid === id || (Array.isArray(m.wamids) && m.wamids.includes(id))) return m;
   }
+  return null;
+}
+
+function applyReaction(phoneNumber, info) {
+  const conv = conversations[phoneNumber];
+  const target = findMessageById(conv, info.target);
+  if (!target) { console.log(`😶 Reaction ${info.emoji || "(removed)"} from ${phoneNumber} — message not found`); return; }
+  if (info.emoji) target.reaction = info.emoji; else delete target.reaction;
+  saveConversations();
+}
+
+// Download the customer's file now (while the id is fresh) and send it on to Dor.
+async function forwardMediaToDor(info, displayName, phoneNumber) {
+  if (!info.mediaId) return;
+  const file = await media.get(info.mediaId); // also caches it for the app
+  if (!file) { console.error(`📎 couldn't download ${info.type} from ${phoneNumber}`); return; }
+  if (!MANAGER_PHONE || phoneNumber === MANAGER_PHONE) return;
+  if (file.buffer.length > FORWARD_MAX_BYTES) { console.log(`📎 ${info.type} too large to forward (${file.buffer.length} bytes)`); return; }
+  const up = await media.upload(file.buffer, file.mimeType, info.filename || undefined);
+  if (!up.ok) return;
+  const kind = info.type === "voice" ? "audio" : info.type;
+  const noCaption = kind === "audio" || kind === "sticker";
+  await media.send(MANAGER_PHONE, kind, up.id, {
+    caption: noCaption ? undefined : `מ-${displayName} · ${phoneNumber}${info.caption ? `\n${info.caption}` : ""}`,
+    filename: info.filename || undefined,
+  });
+}
+
+async function recordNonTextMessage(phoneNumber, customerName, message) {
+  const info = describeInbound(message);
+  if (info.kind === "unsupported" || info.kind === "unknown") {
+    console.log(`📎 ${phoneNumber} raw:`, JSON.stringify(message));
+  }
+
+  if (info.kind === "reaction") return applyReaction(phoneNumber, info);
+  if (info.kind === "text") return queueText(phoneNumber, customerName, info.text, message.id);
+
+  const conv = ensureConversation(phoneNumber, customerName);
+  contacts.autoSaveFromWhatsApp(phoneNumber, customerName);
+  const displayName = contacts.get(phoneNumber)?.name || customerName;
+  const now = new Date().toISOString();
+
+  if (info.kind === "welcome") {
+    conv.messages.push({ role: "assistant", sender: "system", content: `[${info.label}]`, timestamp: now });
+    saveConversations();
+    return;
+  }
+
+  // Edit / delete of a message we have → mark that message instead of a new bubble.
+  if (info.kind === "unsupported" && (info.unsupportedType === "edit" || info.unsupportedType === "revoke")) {
+    const target = findMessageById(conv, info.target);
+    if (target) {
+      if (info.unsupportedType === "edit") target.edited = true; else target.revoked = true;
+      saveConversations();
+      push.notifyTeam({ title: displayName, body: info.label, url: `/app/#/chat/${phoneNumber}`, tag: phoneNumber })
+        .catch(e => console.error("push error:", e.message));
+      return;
+    }
+  }
+
+  const msg = { role: "user", sender: "user", content: info.label, media: message.type, timestamp: now, wamid: message.id || null };
+  if (info.kind === "media" && info.mediaId) { msg.mediaId = info.mediaId; msg.mimeType = info.mimeType; msg.filename = info.filename; }
+  if (info.caption) msg.caption = info.caption;
+  if (info.location) msg.location = info.location;
+  if (info.unsupportedType) msg.unsupportedType = info.unsupportedType;
+  if (info.metaError) msg.metaError = info.metaError;
   conv.messages.push(msg);
-  conv.lastSeen = new Date().toISOString();
+  conv.lastSeen = now;
   conv.unread = (conv.unread || 0) + 1;
   conv.conversationClosed = false;
   conv.waitingForTeam = true;
-  contacts.autoSaveFromWhatsApp(phoneNumber, customerName);
   saveConversations();
-  push.notifyTeam({ title: conv.name || phoneNumber, body: label, url: `/app/#/chat/${phoneNumber}`, tag: phoneNumber })
-    .catch(e => console.error("push error:", e.message));
+
+  // Tell Dor (WhatsApp + push). Several photos in a row → one text alert.
+  const quiet = info.kind === "media" && Date.now() - (dorMediaAlertAt[phoneNumber] || 0) < 30 * 1000;
+  if (info.kind === "media") dorMediaAlertAt[phoneNumber] = Date.now();
+  const unsupportedNote = info.kind === "unsupported" ? "\nאי אפשר לראות את התוכן — כדאי לפנות ללקוח" : "";
+  const mapLink = info.location ? `\nhttps://maps.google.com/?q=${info.location.lat},${info.location.lng}` : "";
+  if (!quiet) {
+    await notifyDor({
+      text: `${info.label}\n${displayName} · ${phoneNumber}${unsupportedNote}${mapLink}`,
+      title: displayName, body: info.label, phone: phoneNumber,
+      whatsapp: info.whatsapp !== false,
+    });
+  } else {
+    push.notifyTeam({ title: displayName, body: info.label, url: `/app/#/chat/${phoneNumber}`, tag: phoneNumber })
+      .catch(e => console.error("push error:", e.message));
+  }
+  if (info.kind === "media") {
+    forwardMediaToDor(info, displayName, phoneNumber).catch(e => console.error("forward media failed:", e.message));
+  }
 }
 
-async function processMessage(phoneNumber, customerMessage, customerName) {
+async function processMessage(phoneNumber, customerMessage, customerName, wamids = []) {
   try {
     const conv = ensureConversation(phoneNumber, customerName);
     conv.name = customerName;
@@ -521,7 +599,9 @@ async function processMessage(phoneNumber, customerMessage, customerName) {
     if (!signOffAfterClose) conv.conversationClosed = false;
     // Capture lastSeen before updating it — used below to detect a new session.
     const prevLastSeen = conv.lastSeen;
-    conv.messages.push({ role: "user", sender: "user", content: customerMessage, timestamp: new Date().toISOString() });
+    const userMsg = { role: "user", sender: "user", content: customerMessage, timestamp: new Date().toISOString() };
+    if (wamids.length) { userMsg.wamid = wamids[wamids.length - 1]; if (wamids.length > 1) userMsg.wamids = wamids; }
+    conv.messages.push(userMsg);
     conv.lastSeen = new Date().toISOString();
     conv.unread = (conv.unread || 0) + 1;
     contacts.autoSaveFromWhatsApp(phoneNumber, customerName);
@@ -655,6 +735,21 @@ function applyStatuses(statuses) {
   if (changed) saveConversations();
 }
 
+// Messages arriving within 10s are answered together.
+function queueText(phoneNumber, customerName, text, wamid) {
+  if (!messageQueues[phoneNumber]) messageQueues[phoneNumber] = { messages: [], timer: null };
+  const queue = messageQueues[phoneNumber];
+  queue.messages.push({ text, name: customerName, wamid });
+  if (queue.timer) clearTimeout(queue.timer);
+  queue.timer = setTimeout(async () => {
+    const batch = messageQueues[phoneNumber]?.messages || [];
+    delete messageQueues[phoneNumber];
+    const combined = batch.map(m => m.text).join('\n');
+    const name = batch[batch.length - 1].name;
+    await processMessage(phoneNumber, combined, name, batch.map(m => m.wamid).filter(Boolean));
+  }, 10 * 1000);
+}
+
 // Receive messages from WhatsApp
 app.post("/webhook", async (req, res) => {
   // Verify Meta's signature over the raw body before doing anything. Fails open
@@ -701,20 +796,8 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    const customerMessage = message.text.body;
-    console.log(`📱 ${customerName}: ${customerMessage}`);
-
-    if (!messageQueues[phoneNumber]) messageQueues[phoneNumber] = { messages: [], timer: null };
-    const queue = messageQueues[phoneNumber];
-    queue.messages.push({ text: customerMessage, name: customerName });
-    if (queue.timer) clearTimeout(queue.timer);
-    queue.timer = setTimeout(async () => {
-      const batch = messageQueues[phoneNumber]?.messages || [];
-      delete messageQueues[phoneNumber];
-      const combined = batch.map(m => m.text).join('\n');
-      const name = batch[batch.length - 1].name;
-      await processMessage(phoneNumber, combined, name);
-    }, 10 * 1000);
+    console.log(`📱 ${customerName}: ${message.text.body}`);
+    queueText(phoneNumber, customerName, message.text.body, message.id);
   } catch (error) {
     console.error("❌ Webhook error:", error.message);
   }

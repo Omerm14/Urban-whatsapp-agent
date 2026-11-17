@@ -30,7 +30,12 @@ AI-powered WhatsApp customer service agent for **אורבן בייקרי** (Urba
    - `[END]` → the customer is wrapping up (thanks / goodbye / ❤️). Short reply, conversation closes — no follow-up, no goodbye later. `lib/closing.js` also detects sign-offs without the tag
    - `[ESCALATE]` → Lia doesn't know. Nothing sent; chat flagged "ליה מחכה לכם", Dor alerted. The answer typed in the app can be saved to the KB
 6. Follow-up: one fixed "צריכים עוד משהו?" after 10 min of silence, only after a real answer (not after a question or a goodbye), at most once a day per customer. No reply in 5 min → closes quietly. There is no automatic goodbye. A sign-off after a closed conversation gets one short reply and doesn't count as a new conversation (no alert)
-7. The team answers from the **team app** (`/app`) — all from Lia's number. Writing in a chat takes it over from Lia; "החזר לליה" gives it back
+7. Non-text messages (`lib/inbound.js`) — Lia never answers them:
+   - photo / video / voice / file → saved right away (media cache) and forwarded to Dor's WhatsApp with the customer's name (one text alert per 30s per customer, then each file)
+   - reaction → shown on the message it's for (no alert)
+   - button / list tap → handled as text
+   - `unsupported` (view-once, poll, edited message…) → WhatsApp doesn't pass the content. Labeled in the app, full payload logged, Dor alerted. An edit/delete of a known message marks that message instead
+8. The team answers from the **team app** (`/app`) — all from Lia's number. Writing in a chat takes it over from Lia; "החזר לליה" gives it back
 
 Lia never sends Dor's contact card or phone number anymore.
 
@@ -53,7 +58,8 @@ Team app (/app, PWA) ⇄ /api (lib/api.js) → Meta API (sent from Lia's number)
 | `lib/contacts.js` | Phone book (`contacts.json`), vCard/CSV import, phone normalization |
 | `lib/push.js` | Web Push to the team's phones (`push.json`, VAPID) — every member switched on under ⋮ → ניהול צוות → "התראות" (admin on by default) |
 | `lib/templates.js` | Approved message templates, read live from Meta |
-| `lib/replyTags.js` | Parses `[HANDOFF]` / `[ESCALATE]` |
+| `lib/replyTags.js` | Parses `[HANDOFF]` / `[ESCALATE]` / `[END]` |
+| `lib/inbound.js` | Classifies non-text inbound messages (media, reaction, button, unsupported…) |
 | `lib/media.js` | Send photos/videos/voice/files (upload to Meta), serve inbound/outbound media via `/api/media/:id` with a cache in `DATA_DIR/media` |
 | `public/app/` | The team app: WhatsApp-style chats, contacts, import, new chat with template |
 
