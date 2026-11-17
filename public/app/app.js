@@ -98,7 +98,7 @@
   }
   function previewText(m) {
     if (!m) return "";
-    const t = String(m.content || "").replace(/\s+/g, " ");
+    const t = String((m.media && !m.mediaId && !m.location ? mediaLabel(m) : m.content) || "").replace(/\s+/g, " ");
     if (m.sender === "lia") return "ליה: " + t;
     if (m.sender === "team") return (m.senderName || "צוות") + ": " + t;
     if (m.sender === "system") return t.replace(/^\[|\]$/g, "");
@@ -621,6 +621,7 @@
         const d = new Date(m.timestamp).toDateString();
         if (d !== lastDay) { html += `<div class="day">${esc(dayLabel(m.timestamp))}</div>`; lastDay = d; lastSide = null; }
       }
+      if (m.media === "reaction") continue; // old reaction placeholders (no emoji was stored)
       if (m.sender === "system") {
         const t = String(m.content || "").replace(/^\[|\]$/g, "");
         html += `<div class="sys">${esc(t)}</div>`; lastSide = null; continue;
@@ -638,7 +639,10 @@
           ? `<span class="meta failed">לא נשלח · ${esc(clock(m.timestamp))}</span>`
           : `<span class="meta">${esc(clock(m.timestamp))} ${tick(m.status)}</span>`)
         : `<span class="meta">${esc(clock(m.timestamp))}</span>`;
-      html += `<div class="bubble ${sideKey}${gap}${m.mediaId && (m.media === "image" || m.media === "sticker" || m.media === "video") ? " has-media" : ""}">${who}${tpl}${renderBody(m)}${meta}</div>`;
+      const flags = (m.edited ? `<span class="flag">✏️ נערכה אצל הלקוח · WhatsApp לא מעביר את הנוסח החדש</span>` : "") +
+        (m.revoked ? `<span class="flag">🚫 הלקוח מחק את ההודעה</span>` : "");
+      const react = m.reaction ? `<span class="reaction" title="תגובה">${esc(m.reaction)}</span>` : "";
+      html += `<div class="bubble ${sideKey}${gap}${m.mediaId && (m.media === "image" || m.media === "sticker" || m.media === "video") ? " has-media" : ""}${react ? " reacted" : ""}">${who}${tpl}${renderBody(m)}${flags}${meta}${react}</div>`;
     }
     return html || `<div class="sys">אין הודעות עדיין</div>`;
   }
@@ -651,15 +655,32 @@
   }
   function fmtSize(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
 
+  // Label for a non-text message without a file (also fixes old "הודעה" bubbles).
+  const UNSUPPORTED = {
+    edit: "✏️ הלקוח ערך הודעה — WhatsApp לא מעביר את הנוסח החדש",
+    revoke: "🚫 הלקוח מחק הודעה",
+    poll: "📊 סקר — WhatsApp לא מעביר סקרים", poll_creation: "📊 סקר — WhatsApp לא מעביר סקרים",
+    view_once: "👁 תמונה/סרטון לצפייה חד-פעמית — WhatsApp לא מעביר אותם",
+    event: "📅 הזמנה לאירוע — WhatsApp לא מעביר אותה",
+  };
+  function mediaLabel(m) {
+    if (m.media === "unsupported") return UNSUPPORTED[m.unsupportedType] || "⚠️ הודעה ש-WhatsApp לא מעביר (כנראה תמונה לצפייה חד-פעמית, סקר או הודעה שנערכה)";
+    if (m.content && m.content !== "הודעה") return m.content;
+    return `הודעה (${m.media})`;
+  }
+
   function renderBody(m) {
     const cap = m.caption ? `<span class="txt">${esc(m.caption)}</span>` : "";
     if (m.location) {
       const href = `https://maps.google.com/?q=${encodeURIComponent(m.location.lat + "," + m.location.lng)}`;
       return `<a class="doc" href="${href}" target="_blank" rel="noopener">${I.pin}<span class="dn">${esc(m.location.name || "מיקום")}</span></a>`;
     }
-    if (!m.mediaId) return `<span class="txt${m.media ? " media" : ""}">${esc(m.content)}</span>`;
+    if (!m.mediaId) {
+      const err = m.metaError ? `<span class="meta-err">${esc([m.metaError.code, m.metaError.title, m.metaError.details].filter(Boolean).join(" · "))}</span>` : "";
+      return `<span class="txt${m.media ? " media" : ""}">${esc(m.media ? mediaLabel(m) : m.content)}</span>${err}`;
+    }
     if (m.media === "image" || m.media === "sticker") {
-      return `<a href="${mediaUrl(m)}" target="_blank" rel="noopener" class="media-link"><img class="media-img${m.media === "sticker" ? " sticker" : ""}" src="${mediaUrl(m)}" alt="${esc(m.caption || "תמונה")}" loading="lazy"></a>${cap}`;
+      return `<a href="${mediaUrl(m)}" target="_blank" rel="noopener" class="media-link"><img class="media-img${m.media === "sticker" ? " sticker" : ""}" src="${mediaUrl(m)}" alt="${esc(m.caption || "תמונה")}" loading="lazy" onerror="this.closest('a').outerHTML='<span class=&quot;txt media&quot;>📷 התמונה לא נטענה (אולי כבר לא זמינה ב-WhatsApp)</span>'"></a>${cap}`;
     }
     if (m.media === "video") return `<video class="media-img" src="${mediaUrl(m)}" controls preload="metadata"></video>${cap}`;
     if (m.media === "audio" || m.media === "voice") return `<audio class="media-audio" src="${mediaUrl(m)}" controls preload="none"></audio>`;
@@ -1206,6 +1227,8 @@
         ${d.morningPing ? row(!!d.morningPing.lastAt, "תבנית בוקר לדור", d.morningPing.lastAt
           ? `נשלחה לאחרונה ${esc(new Date(d.morningPing.lastAt).toLocaleString("he-IL"))} — deploy לא שולח שוב אם נשלחה ב-20 השעות האחרונות`
           : "עוד לא נרשמה שליחה (אם זה חוזר אחרי כל deploy — DATA_DIR לא על ה-volume)") : ""}
+        ${d.mediaStorage ? row(d.mediaStorage.bytes < d.mediaStorage.maxBytes * 0.9, "אחסון מדיה",
+          `${d.mediaStorage.files} קבצים · ${(d.mediaStorage.bytes / 1048576).toFixed(1)} MB מתוך ${Math.round(d.mediaStorage.maxBytes / 1048576)} MB — קבצים בני יותר מ-${d.mediaStorage.maxAgeDays} יום נמחקים אוטומטית`) : ""}
       </div>`);
   }
 
